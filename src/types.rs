@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt::Display};
 
 use serde::{Deserialize, Serialize};
 use web3::types::H256;
@@ -35,6 +35,12 @@ pub type StorageSlot = HashMap<String, String>;
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct BlockStateProof {
     data: HashMap<String, AccountState>,
+}
+
+impl Display for BlockStateProof {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Block state proof with {} accounts accessed)", self.data.keys().count())
+    }
 }
 
 impl BlockStateProof {

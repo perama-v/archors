@@ -49,7 +49,7 @@ async fn main() -> Result<()> {
         // Add to proof.
         proof.insert_tx(&tx, &prestate_response.result);
     }
-
+    println!("{proof}");
     // Serialize proof for transmission or storage.
 
     Ok(())
