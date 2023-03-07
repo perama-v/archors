@@ -1,5 +1,5 @@
 [package]
-name = "archival-scissors"
+name = "archors"
 version = "0.1.0"
 edition = "2021"
 description = "Tool for single Ethereum archival block state proofs"
@@ -7,3 +7,15 @@ description = "Tool for single Ethereum archival block state proofs"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+serde = {  version = "1.0.152", features = ["derive"] }
+serde_json = "1.0.94"
+web3 = "0.18.0"
+
+[dev-dependencies]
+anyhow = "1.0.69"
+ethereum-types = "0.14.1"
+hex = "0.4.3"
+reqwest = { version = "0.11.14", features = ["json"] }
+tokio = { version = "1.26.0", features = ["full"] }
+url = "2.3.1"
+web3 = "0.18.0"

@@ -1,5 +1,6 @@
-# archival-scissors
-A tool for single Ethereum archival block state proofs.
+# archors
+
+**arch**ival sciss**ors**: A tool for single Ethereum archival block state proofs.
 
 ## Why
 
@@ -26,4 +27,5 @@ that block and trace a single transaction.
 
 ## Requirements
 
-Requires knowledge of canonicality of block headers, such as through a cryptographic accumulator.
+- Requires knowledge of canonicality of block headers, such as through a cryptographic accumulator.
+- Full node connection for blocks up to 128 blocks old, or archive node connection for older blocks.
