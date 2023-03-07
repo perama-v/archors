@@ -1,0 +1,9 @@
+[package]
+name = "archival-scissors"
+version = "0.1.0"
+edition = "2021"
+description = "Tool for single Ethereum archival block state proofs"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
