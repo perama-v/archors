@@ -21,7 +21,7 @@ pub struct InputData {
 
 pub type AccountStates = HashMap<String, AccountState>;
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct AccountState {
     // Every account will have a balance.
     pub balance: String,
@@ -98,4 +98,84 @@ fn include_unseen_states(existing: &AccountState, accessed_state: &AccountState)
     };
     updated.storage = updated_storage;
     updated
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dummy_state_1() -> AccountState {
+        let mut slots = HashMap::new();
+        slots.insert("555".to_string(), "333".to_string());
+        AccountState {
+            balance: "123".to_string(),
+            code: Some("608040".to_string()),
+            nonce: Some(2),
+            storage: Some(slots),
+        }
+    }
+    fn dummy_state_2() -> AccountState {
+        AccountState {
+            balance: "123".to_string(),
+            code: None,
+            nonce: None,
+            storage: None,
+        }
+    }
+
+    /// Tests that changes to previously accessed state are ignored.
+    #[test]
+    fn test_modified_states_ignored() {
+        let initial = dummy_state_1();
+        let mut slots = HashMap::new();
+        // New storage key.
+        slots.insert("777".to_string(), "333".to_string());
+        // Previously seen storage key.
+        slots.insert("555".to_string(), "444".to_string());
+        let accessed = AccountState {
+            balance: "456".to_string(),
+            code: Some("11111".to_string()),
+            nonce: Some(200),
+            storage: Some(slots),
+        };
+        let result = include_unseen_states(&initial, &accessed);
+        assert_ne!(initial, result);
+        assert_eq!(result.balance, "123");
+        assert_eq!(result.code, Some("608040".to_string()));
+        assert_eq!(result.nonce, Some(2));
+        assert_eq!(result.storage.unwrap().len(), 2);
+    }
+    #[test]
+    fn test_seen_states_ignored() {
+        let a = dummy_state_1();
+        let b = a.clone();
+        let result = include_unseen_states(&a, &b);
+        assert_eq!(a, result);
+    }
+    #[test]
+    fn test_seen_states_ignored_2() {
+        let a = dummy_state_2();
+        let b = a.clone();
+        let result = include_unseen_states(&a, &b);
+        assert_eq!(a, result);
+    }
+    /// Tests that if a state has not been seen yet that it is included.
+    #[test]
+    fn test_new_states_included() {
+        let initial = dummy_state_2();
+        let mut slots = HashMap::new();
+        slots.insert("111".to_string(), "999".to_string());
+        let accessed = AccountState {
+            balance: "123".to_string(),
+            code: Some("608040".to_string()),
+            nonce: Some(2),
+            storage: Some(slots),
+        };
+        let result = include_unseen_states(&initial, &accessed);
+        assert_ne!(initial, result);
+        assert_eq!(result.balance, "123");
+        assert_eq!(result.code, Some("608040".to_string()));
+        assert_eq!(result.nonce, Some(2));
+        assert_eq!(result.storage.unwrap().len(), 1);
+    }
 }
