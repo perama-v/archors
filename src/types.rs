@@ -44,29 +44,7 @@ impl BlockStateProof {
             // Check for an entry for the account
             match self.data.get_key_value(account) {
                 Some((_, existing)) => {
-                    let mut updated = existing.clone();
-                    // Work out if any parts are new.
-                    if existing.code.is_none() {
-                        updated.code = accessed_state.code.clone();
-                    }
-                    if existing.nonce.is_none() {
-                        updated.nonce = accessed_state.nonce;
-                    }
-                    let updated_storage = match existing.storage.clone() {
-                        None => accessed_state.storage.clone(),
-                        Some(mut existing_storage) => {
-                            // Look up each new storage key.
-                            if let Some(new_storage) = &accessed_state.storage {
-                                for (k, v) in new_storage {
-                                    if !existing_storage.contains_key(k) {
-                                        existing_storage.insert(k.clone(), v.clone());
-                                    }
-                                }
-                            }
-                            Some(existing_storage)
-                        }
-                    };
-                    updated.storage = updated_storage;
+                    let updated = include_unseen_states(existing, accessed_state);
                     self.data.insert(account.to_string(), updated.to_owned());
                 }
                 None => {
@@ -89,4 +67,35 @@ impl Default for BlockStateProof {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// For an initial set of state values for one account, looks for state accesses to
+/// previously untouched state.
+///
+/// Adds the new state into the old one.
+fn include_unseen_states(existing: &AccountState, accessed_state: &AccountState) -> AccountState {
+    let mut updated = existing.clone();
+    // Work out if any parts are new.
+    if existing.code.is_none() {
+        updated.code = accessed_state.code.clone();
+    }
+    if existing.nonce.is_none() {
+        updated.nonce = accessed_state.nonce;
+    }
+    let updated_storage = match existing.storage.clone() {
+        None => accessed_state.storage.clone(),
+        Some(mut existing_storage) => {
+            // Look up each new storage key.
+            if let Some(new_storage) = &accessed_state.storage {
+                for (k, v) in new_storage {
+                    if !existing_storage.contains_key(k) {
+                        existing_storage.insert(k.clone(), v.clone());
+                    }
+                }
+            }
+            Some(existing_storage)
+        }
+    };
+    updated.storage = updated_storage;
+    updated
 }
