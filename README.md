@@ -4,10 +4,23 @@
 
 ## Why
 
-To send a single historical block to a peer and have
+To send a single historical block (as an historical state proof) to a peer and have
 them be able to trustlessly trace the transactions in that block.
 
 Background: https://perama-v.github.io/ethereum/protocol/archive
+
+Who would want that? If there was a network distributing such proofs then users could
+collectively shard an archive node. This could be an extension to an existing network
+such as the Portal Network, which already has a block header cryptographic accumulator.
+
+## Status
+
+> Toy/experimental
+
+In order to construct proofs for the entire history of the chain an Ethereum execution
+node must provide both:
+- debug_traceTransaction
+- eth_getProof
 
 ## Modes
 
