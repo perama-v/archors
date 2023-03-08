@@ -1,15 +1,9 @@
-
-
-
-
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::sync::Arc;
 
     use eth_trie::MemoryDB;
     use eth_trie::{EthTrie, Trie, TrieError};
-    use crate::utils::hex_encode;
 
     #[test]
     fn test_trie() -> Result<(), TrieError> {
