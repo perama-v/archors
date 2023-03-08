@@ -1,7 +1,7 @@
 use std::{collections::HashMap, fmt::Display};
 
 use serde::{Deserialize, Serialize};
-use web3::types::H256;
+use web3::types::{H256, Proof};
 
 #[derive(Deserialize, Serialize)]
 pub struct BasicBlockState {
@@ -33,43 +33,71 @@ pub struct AccountState {
 pub type StorageSlot = HashMap<String, String>;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct BlockStateProof {
-    data: HashMap<String, AccountState>,
+pub struct BlockStateAccesses {
+    /// Mapping of accounts to accessed states. An account may have slots accessed in different
+    /// transactions, they are aggregated here.
+    access_data: HashMap<String, AccountState>
 }
 
-impl Display for BlockStateProof {
+
+impl Display for BlockStateAccesses {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Block state proof with {} accounts accessed)", self.data.keys().count())
+        write!(f, "Block state proof with {} accounts accessed)", self.access_data.keys().count())
     }
 }
 
-impl BlockStateProof {
+impl BlockStateAccesses {
     /// Adds new state to the proof if the state has not previously been added.
-    pub fn insert_tx(&mut self, _tx: &H256, tx_prestate_trace: &AccountStates) -> &mut Self {
+    pub fn include_new_state_accesses_for_tx(&mut self, _tx: &H256, tx_prestate_trace: &AccountStates) -> &mut Self {
         for (account, accessed_state) in tx_prestate_trace {
             // Check for an entry for the account
-            match self.data.get_key_value(account) {
+            match self.access_data.get_key_value(account) {
                 Some((_, existing)) => {
                     let updated = include_unseen_states(existing, accessed_state);
-                    self.data.insert(account.to_string(), updated.to_owned());
+                    self.access_data.insert(account.to_string(), updated.to_owned());
                 }
                 None => {
                     // Add whole state data if no entry for the account.
-                    self.data
+                    self.access_data
                         .insert(account.to_string(), accessed_state.to_owned());
                 }
             }
         }
         self
     }
+    /// Returns a vector of accounts with storage slots that can be used to query
+    /// eth_getProof for a specific block.
+    ///
+    /// The storage slots have been aggregated and may have been accessed in different transactions
+    /// within a block.
+    pub fn get_all_accounts_to_prove(&self) -> Vec<AccountToProve> {
+        let mut accounts: Vec<AccountToProve> = vec![];
+        for account in &self.access_data {
+            if let Some(storage) = &account.1.storage {
+                let address = account.0.to_owned();
+                let mut slots: Vec<String> = vec![];
+                for slot in storage.keys() {
+                    slots.push(slot.to_owned())
+                }
+                accounts.push(AccountToProve{ address, slots });
+            }
+        }
+        accounts
+    }
     pub fn new() -> Self {
-        BlockStateProof {
-            data: HashMap::new(),
+        BlockStateAccesses {
+            access_data: HashMap::new(),
         }
     }
 }
 
-impl Default for BlockStateProof {
+pub struct AccountToProve {
+    pub address: String,
+    pub slots: Vec<String>
+}
+
+
+impl Default for BlockStateAccesses {
     fn default() -> Self {
         Self::new()
     }
@@ -105,6 +133,7 @@ fn include_unseen_states(existing: &AccountState, accessed_state: &AccountState)
     updated.storage = updated_storage;
     updated
 }
+
 
 #[cfg(test)]
 mod tests {

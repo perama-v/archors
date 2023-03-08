@@ -3,11 +3,11 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use url::Url;
-use web3::{self, types::H256};
+use web3::{self, types::{H256, Proof}};
 
 use archors::{
     self,
-    types::{AccountStates, BasicBlockState, BlockStateProof},
+    types::{AccountStates, BasicBlockState, BlockStateAccesses, AccountToProve},
 };
 
 static NODE: &str = "http://127.0.0.1:8545";
@@ -35,9 +35,10 @@ async fn main() -> Result<()> {
         transactions: block.result.transactions,
     };
     // Empty proof.
-    let mut proof = BlockStateProof::new();
+    let mut accesses = BlockStateAccesses::new();
     // Add state needed each transaction.
     for tx in basic_block.transactions {
+        println!("Transaction: {}", archors::utils::hex_encode(tx.as_bytes()));
         // Get transaction.
         let prestate_response = client
             .post(url.as_ref())
@@ -47,9 +48,29 @@ async fn main() -> Result<()> {
             .json::<PrestateResponse>()
             .await?;
         // Add to proof.
-        proof.insert_tx(&tx, &prestate_response.result);
+        accesses.include_new_state_accesses_for_tx(&tx, &prestate_response.result);
     }
-    println!("{proof}");
+    println!("{accesses}");
+    let mut account_proofs: Vec<Value> = vec![];
+    for account in accesses.get_all_accounts_to_prove() {
+        println!("Getting proof for account: {}", account.address);
+        // Get proof for account
+        let account_proof_response = client
+            .post(url.as_ref())
+            .json(& eth_get_proof(&account))
+            .send()
+            .await?
+            .json::<Value>()
+            //.json::<AccountProofResponse>()
+            .await?;
+        // Add to proof.
+        //println!("Proof: {}", account_proof_response);
+        account_proofs.push(account_proof_response)
+    }
+
+    // Combine account nodes from proofs in to single state proof.
+
+
     // Serialize proof for transmission or storage.
 
     Ok(())
@@ -69,6 +90,13 @@ struct PrestateResponse {
     result: AccountStates,
 }
 
+#[derive(Deserialize, Serialize)]
+struct AccountProofResponse {
+    id: u32,
+    jsonrpc: String,
+    result: Proof,
+}
+
 #[derive(Debug, Serialize)]
 struct JsonRpcRequest {
     jsonrpc: String,
@@ -77,6 +105,9 @@ struct JsonRpcRequest {
     id: u64,
 }
 
+
+/// Generates a JSON-RPC request for eth_getBlockByNumber for
+/// the latest finalized block.
 fn get_block_by_number() -> JsonRpcRequest {
     JsonRpcRequest {
         jsonrpc: "2.0".to_owned(),
@@ -86,6 +117,8 @@ fn get_block_by_number() -> JsonRpcRequest {
     }
 }
 
+/// Generates a JSON-RPC request for debug_traceTransaction for
+/// the given transaction.
 fn debug_trace_transaction_prestate(tx: &str) -> JsonRpcRequest {
     JsonRpcRequest {
         jsonrpc: "2.0".to_owned(),
@@ -94,6 +127,19 @@ fn debug_trace_transaction_prestate(tx: &str) -> JsonRpcRequest {
         id: 1,
     }
 }
+
+
+/// Generates a JSON-RPC request for eth_getProof for
+/// the given account and storage slots at the latest finalized block.
+fn eth_get_proof(account: &AccountToProve) -> JsonRpcRequest {
+    JsonRpcRequest {
+        jsonrpc: "2.0".to_owned(),
+        method: "eth_getProof".to_owned(),
+        params: vec![json!(account.address), json!(account.slots), json!("finalized")],
+        id: 1,
+    }
+}
+
 
 fn _debug_trace_transaction_prestate_diffmode(tx: &str) -> JsonRpcRequest {
     JsonRpcRequest {
