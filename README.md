@@ -13,6 +13,13 @@ Who would want that? If there was a network distributing such proofs then users 
 collectively shard an archive node. This could be an extension to an existing network
 such as the Portal Network, which already has a block header cryptographic accumulator.
 
+How are these >17 million proofs being generated? With this tool! One needs an archive node
+that serves `eth_getProof`. Then the actual historical state at each block can be exported and stored. These proofs only include state that was accessed during that block, not the entire chain state.
+
+A proof plus a block body allows isolated single block trace. That is, every EVM operation
+can be replayed and inspected - without needing the rest of the chain. Nodes can store
+subsets of the data and remain functional and trustless.
+
 ## Status
 
 > Toy/experimental
