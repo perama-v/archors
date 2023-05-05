@@ -1,12 +1,27 @@
 use std::{collections::HashMap, fmt::Display};
 
 use serde::{Deserialize, Serialize};
-use web3::types::H256;
+use web3::types::{Proof, H256};
+
+/// Helper for caching
+#[derive(Deserialize, Serialize)]
+pub(crate) struct BlockProofs {
+    /// Map of account -> proof
+    pub(crate) proofs: HashMap<String, Proof>,
+}
 
 #[derive(Deserialize, Serialize)]
 pub struct BasicBlockState {
     pub state_root: H256,
     pub transactions: Vec<H256>,
+}
+
+/// Prestate tracer for all transactions in a block, as returned by
+/// a node.
+#[derive(Deserialize, Serialize)]
+pub struct BlockPrestateTrace {
+    pub block_number: u64,
+    pub prestate_traces: Vec<TransactionAccountStates>,
 }
 
 pub struct InputData {
@@ -19,8 +34,16 @@ pub struct InputData {
     pub first_state: HashMap<String, AccountState>,
 }
 
-pub type AccountStates = HashMap<String, AccountState>;
+/// Records the account states for a single transaction. A transaction
+/// may involve multiple accounts, each with it's own state.
+///
+/// The mapping is of account -> account_state.
+pub type TransactionAccountStates = HashMap<String, AccountState>;
 
+/// Records the state for a particular account.
+///
+/// A prestate tracer
+/// only includes state that was accessed, hence the optional fields.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct AccountState {
     // Every account will have a balance.
@@ -36,7 +59,7 @@ pub type StorageSlot = HashMap<String, String>;
 pub struct BlockStateAccesses {
     /// Mapping of accounts to accessed states. An account may have slots accessed in different
     /// transactions, they are aggregated here.
-    access_data: HashMap<String, AccountState>,
+    pub(crate) access_data: HashMap<String, AccountState>,
 }
 
 impl Display for BlockStateAccesses {
@@ -50,11 +73,15 @@ impl Display for BlockStateAccesses {
 }
 
 impl BlockStateAccesses {
-    /// Adds new state to the proof if the state has not previously been added.
+    /// Adds new state to the state access record if the state has not previously
+    /// been added by a prior transaction.
+    ///
+    /// When an account has been accessed, any unseen aspects of that account
+    /// are included (e.g., if balance was first accessed, then code later, the code
+    /// is added to the record).
     pub fn include_new_state_accesses_for_tx(
         &mut self,
-        _tx: &H256,
-        tx_prestate_trace: &AccountStates,
+        tx_prestate_trace: &TransactionAccountStates,
     ) -> &mut Self {
         for (account, accessed_state) in tx_prestate_trace {
             // Check for an entry for the account
@@ -99,6 +126,7 @@ impl BlockStateAccesses {
     }
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct AccountToProve {
     pub address: String,
     pub slots: Vec<String>,
