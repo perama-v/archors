@@ -145,3 +145,52 @@ sequenceDiagram
 ```
 The proof sent to a peer is a proof of all accessed accounts, and for each account
 a proof for each accessed storage slot is included.
+
+## State and proof data propoerties
+
+A sample (`./data/blocks/17190873`) is prepared using the examples, which
+call a node and cache the results for testing.
+
+The cache has the following properties:
+- 17KB block_with_transactions.json
+    - TODO: Include transaction calldata by setting eth_getBlockByNumber flag to true.
+- 13.1MB block_prestate_trace.json (don't need)
+    - 4.4MB block_accessed_state_deduplicated.json
+        - 1.6MB block_accessed_state_deduplicated.snappy
+- 6.4MB block_state_proofs.json
+    - 4.3MB block_state_proofs.json
+
+Hence, in order to fully trace block `17190873` the data is:
+- 17KB Transactions
+- 1.6MB State
+- 4.3MB Proofs
+
+Total: ~6MB
+
+There is still some duplication here, with some state values existing in the State
+and Proof files. However, this will be a small value. Hence, the total size for the
+data that needs to be sent to a peer for this particular block is approximately 6MB.
+
+|Block|MGas|Txs|Internal Txs|State Values|State Proof|Total P2P payload|
+|-|-|-|-|-|-|-|
+|17190873|29|200|217|1.6 MB| 4.3 MB|5.9 MB|
+|17193183|17|100|42|0.7 MB|2.6 MB|3.3 MB|
+|17193270|23|395|97|1.4 MB|4.6 MB|5.9 MB|
+
+This is too small a sample to extrapolate from, but I will do exactly that:
+The total blockchain 1.7e7 * 5 MB = 8.5e7 MB = 8.5e4 GB = 8.5e1 TB = 85 TB.
+
+With 100 nodes: 8.5 TB
+|Nodes|Node size (replication=1)| Node size (replication = 10)|
+|-|-|-|
+|1|85TB|850TB|
+|100|850GB|8.5TB|
+|1000|85GB|850GB|
+|10000|8.5GB|85GB|
+
+
+### Additional compression
+
+It is noted that contract data and merkle tree nodes are common amongst different blocks.
+This represents compressible data for a single node. The prevalence of these occurrences
+and therefore the amount of additional compression available is unknown.
