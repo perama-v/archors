@@ -18,7 +18,7 @@ use crate::{
         BlockResponse, TxPrestateResponse,
     },
     types::{BlockPrestateTrace, BlockProofs, BlockStateAccesses},
-    utils::hex_encode,
+    utils::{hex_encode, compress, UtilsError},
 };
 
 static CACHE_DIR: &str = "data/blocks";
@@ -35,6 +35,9 @@ pub enum CacheError {
     SerdeJsonError(#[from] serde_json::Error),
     #[error("Url error {0}")]
     UrlError(#[from] ParseError),
+    #[error("Utils error {0}")]
+    UtilsError(#[from] UtilsError),
+
 }
 
 pub async fn store_block_with_transactions(url: &str, target_block: u64) -> Result<(), CacheError> {
@@ -142,16 +145,11 @@ pub async fn store_state_proofs(url: &str, target_block: u64) -> Result<(), Cach
 pub fn compress_deduplicated_state(target_block: u64) -> Result<(), CacheError> {
     let dirname = PathBuf::from(format!("{CACHE_DIR}/{target_block}"));
     let block_file = dirname.join("block_accessed_state_deduplicated.json");
-    let data = fs::read_to_string(block_file)?;
-    let block: BlockStateAccesses = serde_json::from_str(&data)?;
+    let data = fs::read(block_file)?;
+    let compressed = compress(data)?;
 
-    todo!("snappy");
-    let compressed = "todo";
-
-    let dirname = PathBuf::from(format!("{CACHE_DIR}/{target_block}"));
-    fs::create_dir_all(&dirname)?;
-    let mut block_file = File::create(dirname.join("block_accessed_state_compressed.snappy"))?;
-    block_file.write_all(serde_json::to_string_pretty(&compressed)?.as_bytes())?;
+    let mut file = File::create(dirname.join("block_accessed_state_deduplicated.snappy"))?;
+    file.write_all(&compressed)?;
     Ok(())
 }
 
@@ -162,16 +160,11 @@ pub fn compress_deduplicated_state(target_block: u64) -> Result<(), CacheError> 
 pub fn compress_proofs(target_block: u64) -> Result<(), CacheError> {
     let dirname = PathBuf::from(format!("{CACHE_DIR}/{target_block}"));
     let block_file = dirname.join("block_state_proofs.json");
-    let data = fs::read_to_string(block_file)?;
-    let proofs: BlockProofs = serde_json::from_str(&data)?;
+    let data = fs::read(block_file)?;
+    let compressed = compress(data)?;
 
-    todo!("snappy");
-    let compressed = "todo";
-
-    let dirname = PathBuf::from(format!("{CACHE_DIR}/{target_block}"));
-    fs::create_dir_all(&dirname)?;
-    let mut block_file = File::create(dirname.join("block_state_proof_compressed.snappy"))?;
-    block_file.write_all(serde_json::to_string_pretty(&compressed)?.as_bytes())?;
+    let mut file = File::create(dirname.join("block_state_proofs.snappy"))?;
+    file.write_all(&compressed)?;
     Ok(())
 }
 
