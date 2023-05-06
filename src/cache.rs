@@ -168,21 +168,7 @@ pub fn compress_proofs(target_block: u64) -> Result<(), CacheError> {
     Ok(())
 }
 
-/// Uses a cached block to individually prestate trace each transaction and store the result.
-pub async fn _store_block_prestate_tracer_granular(
-    url: &str,
-    target_block: u64,
-) -> Result<(), CacheError> {
-    let dirname = PathBuf::from(format!("{CACHE_DIR}/{target_block}"));
-    let block_file = dirname.join("block_with_transactions.json");
-    let data = fs::read_to_string(block_file)?;
-    let block: Block<H256> = serde_json::from_str(&data)?;
 
-    let client = Client::new();
-    let mut block_trace = BlockPrestateTrace {
-        block_number: target_block,
-        prestate_traces: vec![],
-    };
 
     for tx in block.transactions {
         let response: TxPrestateResponse = client
