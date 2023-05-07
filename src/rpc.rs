@@ -45,17 +45,6 @@ pub(crate) struct BlockPrestateInnerTx {
     pub(crate) result: TransactionAccountStates,
 }
 
-/// Generates a JSON-RPC request for debug_traceTransaction for
-/// the given transaction.
-pub(crate) fn debug_trace_transaction_prestate(tx: &str) -> JsonRpcRequest {
-    JsonRpcRequest {
-        jsonrpc: "2.0".to_owned(),
-        method: "debug_traceTransaction".to_owned(),
-        params: vec![json!(tx), json!({"tracer": "prestateTracer"})],
-        id: 1,
-    }
-}
-
 /// Generates a JSON-RPC request for debug_traceBlockByNumber for
 /// the given block.
 pub(crate) fn debug_trace_block_prestate(block: &str) -> JsonRpcRequest {
