@@ -3,11 +3,13 @@ use std::{collections::HashMap, fmt::Display};
 use serde::{Deserialize, Serialize};
 use web3::types::{Proof, H256};
 
+use crate::proof::{verify_proof, ProofError};
+
 /// Helper for caching
 #[derive(Deserialize, Serialize)]
-pub(crate) struct BlockProofs {
+pub struct BlockProofs {
     /// Map of account -> proof
-    pub(crate) proofs: HashMap<String, Proof>,
+    pub proofs: HashMap<String, Proof>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -123,6 +125,16 @@ impl BlockStateAccesses {
         BlockStateAccesses {
             access_data: HashMap::new(),
         }
+    }
+}
+
+impl BlockProofs {
+    /// Verifies the proofs present for the block with respect to a state root.
+    pub fn verify(&self) -> Result<(), ProofError> {
+        for (account, proof) in &self.proofs {
+            verify_proof(account, proof)?
+        }
+        Ok(())
     }
 }
 

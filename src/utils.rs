@@ -1,4 +1,4 @@
-use std::io::{Read, self};
+use std::io::{self, Read};
 
 use thiserror::Error;
 
@@ -12,7 +12,6 @@ pub enum UtilsError {
 pub fn hex_encode<T: AsRef<[u8]>>(bytes: T) -> String {
     format!("0x{}", hex::encode(bytes))
 }
-
 
 /// Performs snappy compression on bytes.
 ///
