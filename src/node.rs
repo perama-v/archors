@@ -3,7 +3,7 @@ use ethers::types::H256;
 use thiserror::Error;
 
 use crate::{
-    path::{NibblePath, PathError},
+    path::{NibblePath, PathError, PathNature, PrefixEncoding},
     proof::ProofType,
 };
 
@@ -33,10 +33,20 @@ pub enum NodeError {
     TerminalBranchNodeHasNoValue,
     #[error("Branch node (terminal) has value, expected none")]
     TerminalBranchNodeHasValue,
-    #[error("Terminal extension or leaf node has no first item")]
-    TerminalExtensionOrLeafHasNoItem,
+    #[error("Terminal extension node has no next node")]
+    TerminalExtensionHasNoNextNode,
+    #[error("Terminal extension node expected to have a final path, found none")]
+    TerminalExtensionHasNoPath,
+    #[error("Terminal extension node completes the 32 byte path, only leaf can do this")]
+    TerminalExtensionHasFullPath,
     #[error("Terminal extension/leaf node expected to have a final path, found none")]
     TerminalExtensionOrLeafHasNoPath,
+    #[error("Terminal leaf node has no value")]
+    TerminalLeafHasNoValue,
+    #[error("Terminal leaf node expected to have a final path, found none")]
+    TerminalLeafHasNoPath,
+    #[error("Terminal leaf node must complete the 32 byte path")]
+    TerminalLeafHasIncompletePath,
     #[error("VerificationError {0}")]
     VerificationError(String),
 }
@@ -49,8 +59,10 @@ pub enum NodeKind {
     Extension,
     // 17 items and is at end
     TerminalBranch,
-    // 2 items, and is at end
-    TerminalExtensionOrLeaf,
+    // 2 items, and is at end, path encoding indicates extension
+    TerminalExtension,
+    // 2 items, and is at end, path encoding indicates leaf
+    Leaf,
 }
 
 impl NodeKind {
@@ -60,10 +72,22 @@ impl NodeKind {
         node_index: usize,
         node_total: usize,
         items_in_node: usize,
+        node: &[Vec<u8>],
     ) -> Result<Self, NodeError> {
         let terminal = node_index == node_total - 1;
         let kind = match (terminal, items_in_node) {
-            (true, 2) => NodeKind::TerminalExtensionOrLeaf,
+            (true, 2) => {
+                let path: &[u8] = node
+                    .get(0)
+                    .ok_or_else(|| NodeError::TerminalExtensionOrLeafHasNoPath)?;
+                let encoding = PrefixEncoding::try_from(path)?;
+                match encoding {
+                    PrefixEncoding::ExtensionEven | PrefixEncoding::ExtensionOdd(_) => {
+                        NodeKind::TerminalExtension
+                    }
+                    PrefixEncoding::LeafEven | PrefixEncoding::LeafOdd(_) => NodeKind::Leaf,
+                }
+            }
             (false, 2) => NodeKind::Extension,
             (true, 17) => NodeKind::TerminalBranch,
             (false, 17) => NodeKind::Branch,
@@ -74,6 +98,7 @@ impl NodeKind {
     /// Checks that a particular item of a node is valid.
     ///
     /// If an intermediate node, returns the hash that is now the parent for the next node.
+    /// A node is a vector of items (bytes representing one of path/hash/rlp_value)
     pub fn check_contents(
         &self,
         node: Vec<Vec<u8>>,
@@ -131,25 +156,91 @@ impl NodeKind {
                 }
                 return Err(NodeError::TerminalBranchNodeHasValue);
             }
-            NodeKind::TerminalExtensionOrLeaf => {
-                // Decode the nibble and get the type.
+            NodeKind::TerminalExtension => {
                 let first_item = node
                     .get(0)
-                    .ok_or_else(|| NodeError::TerminalExtensionOrLeafHasNoPath)?;
-
+                    .ok_or_else(|| NodeError::TerminalExtensionHasNoPath)?;
                 let second_item = node
                     .get(1)
-                    .ok_or_else(|| NodeError::TerminalExtensionOrLeafHasNoItem)?;
-                match traversal.is_inclusion_proof(first_item) {
-                    true => Ok(ProofType::Inclusion(second_item.to_vec())),
-                    false => {
+                    .ok_or_else(|| NodeError::TerminalExtensionHasNoNextNode)?;
+                match traversal.match_or_mismatch(first_item)? {
+                    PathNature::SubPathMatches => {
+                        // exclusion proof. key shares some path with this node but diverges later so this is the latest relevant node
                         if second_item.is_empty() {
-                            return Ok(ProofType::Exclusion);
+                            todo!("Even in an exclusion proof, shouldn't there be a next node?")
+                            // return Err(NodeError::ExclusionProofNodeHasNoNextNode);
                         }
-                        return Err(NodeError::ExclusionProofNodeHasValue);
+                        Ok(ProofType::Exclusion)
+                    }
+                    PathNature::SubPathDivergent => {
+                        if second_item.is_empty() {
+                            todo!("Even in an exclusion proof, shouldn't there be a next node?")
+                            // return Err(NodeError::ExclusionProofNodeHasNoNextNode);
+                        }
+                        Ok(ProofType::Exclusion)
+                    }
+                    PathNature::FullPathMatches | PathNature::FullPathDivergent => {
+                        return Err(NodeError::TerminalExtensionHasFullPath)
+                    }
+                }
+            }
+            NodeKind::Leaf => {
+                let first_item = node
+                    .get(0)
+                    .ok_or_else(|| NodeError::TerminalLeafHasNoPath)?;
+                let second_item = node
+                    .get(1)
+                    .ok_or_else(|| NodeError::TerminalLeafHasNoValue)?;
+                match traversal.match_or_mismatch(first_item)? {
+                    PathNature::SubPathMatches | PathNature::SubPathDivergent => {
+                        Err(NodeError::TerminalLeafHasIncompletePath)
+                    }
+                    PathNature::FullPathMatches => {
+                        if second_item.is_empty() {
+                            todo!("an inclusion proof cannot have empty leaf value")
+                        }
+                        Ok(ProofType::Inclusion(second_item.to_vec()))
+                    }
+                    PathNature::FullPathDivergent => {
+                        todo!("Err, this is an inclusion proof for different key")
                     }
                 }
             }
         }
+    }
+}
+
+mod test {
+    #[test]
+    fn test_inclusion_leaf_for_nonzero_value() {
+        todo!()
+    }
+    #[test]
+    fn test_inclusion_leaf_for_zero_value() {
+        todo!()
+    }
+    #[test]
+    fn test_inclusion_leaf_for_nonzero_key() {
+        todo!()
+    }
+    #[test]
+    fn test_inclusion_leaf_for_zero_key() {
+        todo!()
+    }
+    #[test]
+    fn test_exclusion_branch_for_nonzero_key() {
+        todo!()
+    }
+    #[test]
+    fn test_exclusion_branch_for_zero_key() {
+        todo!()
+    }
+    #[test]
+    fn test_exclusion_extension_for_nonzero_key() {
+        todo!()
+    }
+    #[test]
+    fn test_exclusion_extension_for_zero_key() {
+        todo!()
     }
 }
