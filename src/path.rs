@@ -25,12 +25,18 @@ use thiserror::Error;
 pub enum PathError {
     #[error("Branch node (non-terminal) has value, expected none")]
     BranchNodeHasValue,
-    #[error("Extension path nibble did not match the expected path")]
-    ExtensionNibbleMismatch,
+    #[error("Extension path nibble {extension_contained} did not match the expected nibble {expected} (index={visiting})")]
+    ExtensionNibbleMismatch {
+        visiting: usize,
+        expected: u8,
+        extension_contained: u8,
+    },
     #[error("Extension node does not contain any path data")]
     ExtensionPathEmpty,
     #[error("Extension path in extension node longer than expected")]
     ExtensionPathLongerThanExpected,
+    #[error("Attempted to determine inclusion/exclusion without looking past nibble {0}")]
+    EvaluatedProofOnPartialPath(usize),
     #[error("Unable to decode invalid hex compact trie path encoding prefix")]
     InvalidCompactPrefix,
     #[error("Nibble must be in the range 0-15, got {0}")]
@@ -48,7 +54,7 @@ pub enum PathError {
 /// E.g., Path 5a1 Follow node indices in this order: [5, 10, 1]
 #[derive(Default, Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct NibblePath {
-    // Nibble (u4) represented as u8.
+    // Nibble (u4) sequence represented as sequence of u8.
     path: Vec<u8>,
     // Index of nibble in path that is being viseted.
     visiting_index: usize,
@@ -78,30 +84,14 @@ impl NibblePath {
     /// for a prefix.
     ///
     /// E.g., append([prefix, '8', 'a') to ['b', 'e'] -> ['b', 'e', '8', 'a']
-    pub fn append_sequence(&mut self, extension_subpath: &[u8]) -> Result<&mut Self, PathError> {
+    pub fn append_prefixed_sequence(
+        &mut self,
+        extension_subpath: &[u8],
+    ) -> Result<&mut Self, PathError> {
         if self.path.len() == 64 {
             return Err(PathError::PathTooLong);
         }
-
-        let first_byte = extension_subpath
-            .get(0)
-            .ok_or_else(|| PathError::ExtensionPathEmpty)?;
-
-        let mut addition = vec![];
-        match CompactEncoding::try_from(*first_byte)? {
-            CompactEncoding::ExtensionEven | CompactEncoding::LeafEven => {
-                // Do nothing. Whole first byte is encoding/padding.
-            }
-            CompactEncoding::ExtensionOdd(nibble) | CompactEncoding::LeafOdd(nibble) => {
-                addition.push(nibble)
-            }
-        };
-        extension_subpath
-            .into_iter()
-            .skip(1) // First byte is compact encoding.
-            .flat_map(byte_to_nibbles)
-            .for_each(|nibble| addition.push(nibble));
-
+        let mut addition = prefixed_bytes_to_nibbles(extension_subpath)?;
         self.path.append(&mut addition);
         Ok(self)
     }
@@ -116,8 +106,7 @@ impl NibblePath {
     }
     /// Skips nibbles that are encountered in an extension node.
     pub fn skip_extension_node_nibbles(&mut self, extension: &[u8]) -> Result<(), PathError> {
-        let extension_nibbles: Vec<u8> = extension.into_iter().flat_map(byte_to_nibbles).collect();
-
+        let extension_nibbles: Vec<u8> = prefixed_bytes_to_nibbles(extension)?;
         for skip_nibble in extension_nibbles {
             // Assert that the nibble matches the expected nibble
             let expected = self
@@ -125,7 +114,11 @@ impl NibblePath {
                 .get(self.visiting_index)
                 .ok_or_else(|| PathError::ExtensionPathLongerThanExpected)?;
             if expected != &skip_nibble {
-                return Err(PathError::ExtensionNibbleMismatch);
+                return Err(PathError::ExtensionNibbleMismatch {
+                    visiting: self.visiting_index,
+                    expected: *expected,
+                    extension_contained: skip_nibble,
+                });
             }
             // Walk forward
             self.visiting_index += 1;
@@ -134,50 +127,86 @@ impl NibblePath {
     }
     /// Checks if terminal extension/leaf node has a path that matches (inclusion proof) or
     /// doesn't match (exclusion proof).
-    pub fn is_inclusion_proof(&mut self, final_subpath: &[u8]) -> bool {
+    pub fn is_inclusion_proof(&mut self, final_subpath: &[u8]) -> Result<bool, PathError> {
         let mut temp_index = self.visiting_index;
-        let subpath_nibbles: Vec<u8> = final_subpath
-            .into_iter()
-            .flat_map(byte_to_nibbles)
-            .collect();
+        let subpath_nibbles = prefixed_bytes_to_nibbles(final_subpath)?;
 
         for skip_nibble in subpath_nibbles {
             // Assert that the nibble matches the expected nibble
             let Some(expected) = self
                 .path
                 .get(temp_index)
-                else {return false};
+                else {
+                    // Extension is longer than path remaining. It must be pointing
+                    // a different path in the trie.
+                    // If this proof is valid, it will be an exclusion proof.
+                    return Ok(false)
+                };
             if expected != &skip_nibble {
-                return false;
+                // Extension diverges from the expected path for this key.
+                // If this proof is valid, it will be an exclusion proof.
+                return Ok(false);
             }
             // Walk forward
             temp_index += 1;
         }
-        true
+        if temp_index == 64 {
+            // A full path (32 bytes, 64 nibbles) must have been checked
+            return Ok(true)
+        }
+        // This function may not be used on non-terminal nodes.
+        Err(PathError::EvaluatedProofOnPartialPath(temp_index))
     }
+}
+
+/// Turns sequence of bytes in to sequence of nibbles. The bytes are prefixed
+/// with extension/node and even/odd encoding. This encoding is removed from the result.
+///
+/// Each nibble will be represented as a u8.
+///
+/// vec![0x12, 0xab] -> vec![0x1, 0x2, 0xa, 0xb]
+fn prefixed_bytes_to_nibbles(bytes: &[u8]) -> Result<Vec<u8>, PathError> {
+    let mut nibbles = vec![];
+
+    let first_byte = bytes.get(0).ok_or_else(|| PathError::ExtensionPathEmpty)?;
+    match PrefixEncoding::try_from(*first_byte)? {
+        PrefixEncoding::ExtensionEven | PrefixEncoding::LeafEven => {
+            // Do nothing. Whole first byte is encoding/padding.
+        }
+        PrefixEncoding::ExtensionOdd(nibble) | PrefixEncoding::LeafOdd(nibble) => {
+            nibbles.push(nibble)
+        }
+    };
+    bytes
+        .iter()
+        .skip(1) // First byte is compact encoding.
+        .flat_map(byte_to_nibbles)
+        .for_each(|nibble| nibbles.push(nibble));
+
+    Ok(nibbles)
 }
 
 /// Hex prefix encoding, used for paths in Merkle Patricia Tries. The Odd variants
 /// contain a nibble of data, the even variants only contain a padding.
 ///
 /// https://ethereum.org/en/developers/docs/data-structures-and-encoding/patricia-merkle-trie/#specification
-enum CompactEncoding {
+enum PrefixEncoding {
     ExtensionEven,
     ExtensionOdd(u8),
     LeafEven,
     LeafOdd(u8),
 }
 
-impl TryFrom<u8> for CompactEncoding {
+impl TryFrom<u8> for PrefixEncoding {
     type Error = PathError;
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         let nibbles = byte_to_nibbles(&value);
         let encoding = match nibbles {
-            [0, _] => CompactEncoding::ExtensionEven,
-            [1, nibble @ _] => CompactEncoding::ExtensionOdd(nibble),
-            [2, _] => CompactEncoding::LeafEven,
-            [3, nibble @ _] => CompactEncoding::LeafOdd(nibble),
+            [0, _] => PrefixEncoding::ExtensionEven,
+            [1, nibble @ _] => PrefixEncoding::ExtensionOdd(nibble),
+            [2, _] => PrefixEncoding::LeafEven,
+            [3, nibble @ _] => PrefixEncoding::LeafOdd(nibble),
             [_, _] => return Err(PathError::InvalidCompactPrefix),
         };
         Ok(encoding)
@@ -196,9 +225,33 @@ fn byte_to_nibbles(byte: &u8) -> [u8; 2] {
 mod test {
     use super::*;
 
+    #[test]
+    fn test_prefixed_bytes_to_nibbles() {
+        let even_extension = &hex::decode("00012345").unwrap();
+        assert_eq!(
+            prefixed_bytes_to_nibbles(even_extension).unwrap(),
+            vec![0x0, 0x1, 0x2, 0x3, 0x4, 0x5]
+        );
+        let odd_extension = &hex::decode("112345").unwrap();
+        assert_eq!(
+            prefixed_bytes_to_nibbles(odd_extension).unwrap(),
+            vec![0x1, 0x2, 0x3, 0x4, 0x5]
+        );
+        let even_leaf = &hex::decode("200f1cb8").unwrap();
+        assert_eq!(
+            prefixed_bytes_to_nibbles(even_leaf).unwrap(),
+            vec![0x0, 0xf, 0x1, 0xc, 0xb, 0x8]
+        );
+        let odd_leaf = &hex::decode("3f1cb8").unwrap();
+        assert_eq!(
+            prefixed_bytes_to_nibbles(odd_leaf).unwrap(),
+            vec![0xf, 0x1, 0xc, 0xb, 0x8]
+        );
+    }
+
     /// Tests that adding an extension path to a partial traversal handles encoded hex prefix.
     #[test]
-    fn test_compact_decode() {
+    fn test_append_prefixed_sequence() {
         /*
         // src: https://ethereum.org/en/developers/docs/data-structures-and-encoding/patricia-merkle-trie/#specification
         path -> nibble sequence
@@ -221,15 +274,189 @@ mod test {
     fn extension_correct(extension: &str, expected_nibbles: &[u8]) {
         let mut traversal = NibblePath::init(&hex::decode("abc987").unwrap());
         let mut expected_total = vec![0xa, 0xb, 0xc, 0x9, 0x8, 0x7];
-        assert_eq!(traversal.path, expected_total);
 
         traversal
-            .append_sequence(&hex::decode(extension).unwrap())
+            .append_prefixed_sequence(&hex::decode(extension).unwrap())
             .unwrap();
         expected_total.extend_from_slice(&expected_nibbles);
         assert_eq!(
             traversal.path, expected_total,
             "Failed to add {extension} extension"
         )
+    }
+    #[test]
+    fn test_init() {
+        let traversal = NibblePath::init(&hex::decode("abc987").unwrap());
+        assert_eq!(traversal.path, vec![0xa, 0xb, 0xc, 0x9, 0x8, 0x7])
+    }
+
+    #[test]
+    fn test_append_one() {
+        let mut traversal = NibblePath::init(&hex::decode("a46a34").unwrap());
+        traversal.append_one(9).unwrap();
+        assert_eq!(traversal.path, vec![0xa, 0x4, 0x6, 0xa, 0x3, 0x4, 0x9]);
+        assert!(traversal.append_one(90).is_err());
+    }
+
+    #[test]
+    fn test_visit_path_nibble() {
+        let mut traversal = NibblePath::init(&hex::decode("abcd").unwrap());
+        assert_eq!(traversal.visit_path_nibble().unwrap(), 0xa);
+        assert_eq!(traversal.visit_path_nibble().unwrap(), 0xb);
+        assert_eq!(traversal.visit_path_nibble().unwrap(), 0xc);
+        assert_eq!(traversal.visit_path_nibble().unwrap(), 0xd);
+        assert!(traversal.visit_path_nibble().is_err());
+    }
+
+    #[test]
+    fn test_skip_extension_node_odd_nibbles() {
+        // Skip 'c2345' (an odd number of nibbles, for an extension node, hence prefix '1')
+        let odd_extension = &hex::decode("1c2345").unwrap();
+        assert_eq!(
+            prefixed_bytes_to_nibbles(odd_extension).unwrap(),
+            vec![0xc, 0x2, 0x3, 0x4, 0x5]
+        );
+        let mut traversal = NibblePath::init(&hex::decode("abc2345def6789").unwrap());
+        assert_eq!(traversal.visit_path_nibble().unwrap(), 0xa);
+        assert_eq!(traversal.visit_path_nibble().unwrap(), 0xb);
+        // Skip past 'c2345'
+        traversal
+            .skip_extension_node_nibbles(odd_extension)
+            .unwrap();
+        // End up at 'd'
+        assert_eq!(traversal.visit_path_nibble().unwrap(), 0xd);
+        // Try to skip again, using the same extension. Should fail.
+        assert!(traversal
+            .skip_extension_node_nibbles(odd_extension)
+            .is_err());
+    }
+
+    #[test]
+    fn test_skip_extension_node_even_nibbles() {
+        // Skip '2345' (an even number of nibbles, for an extension node,
+        // hence prefix '0' and padding '0')
+        let odd_extension = &hex::decode("002345").unwrap();
+        assert_eq!(
+            prefixed_bytes_to_nibbles(odd_extension).unwrap(),
+            vec![0x2, 0x3, 0x4, 0x5]
+        );
+        let mut traversal = NibblePath::init(&hex::decode("abc2345def6789").unwrap());
+        assert_eq!(traversal.visit_path_nibble().unwrap(), 0xa);
+        assert_eq!(traversal.visit_path_nibble().unwrap(), 0xb);
+        assert_eq!(traversal.visit_path_nibble().unwrap(), 0xc);
+        // Skip past '2345'
+        traversal
+            .skip_extension_node_nibbles(odd_extension)
+            .unwrap();
+        // End up at 'd'
+        assert_eq!(traversal.visit_path_nibble().unwrap(), 0xd);
+        // Try to skip again, using the same extension. Should fail.
+        assert!(traversal
+            .skip_extension_node_nibbles(odd_extension)
+            .is_err());
+    }
+
+    /// Traverses the trie path all in one go, by encounerint an extension node
+    /// that matches the entire path.
+    #[test]
+    fn test_is_inclusion_proof_with_terminal_extension_node_early_extension() {
+        // Skip entire path (an even number of nibbles, for an extension node,
+        // hence prefix '0' and padding '0')
+        let even_extension = &hex::decode("000123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef").unwrap();
+        let mut traversal = NibblePath::init(&hex::decode("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef").unwrap());
+        assert!(traversal.is_inclusion_proof(even_extension).unwrap());
+    }
+
+    /// Traverses the trie path in two steps, together making a full path traversal.
+    #[test]
+    fn test_is_inclusion_proof_with_terminal_extension_node_two_parts() {
+        // Skip partial path (an even number of nibbles, for an extension node,
+        // hence prefix '0' and padding '0')
+        let even_extension_1 = &hex::decode("000123456789abcdef0123456789abcdef0123456789").unwrap();
+        let mut traversal = NibblePath::init(&hex::decode("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef").unwrap());
+
+        // Inclusion/exclusion proof cannot be evaluated without looking at the full path.
+        assert!(traversal.is_inclusion_proof(even_extension_1).is_err());
+        // Apply/traverse the first extension node.
+        traversal.skip_extension_node_nibbles(even_extension_1).unwrap();
+
+        let even_extension_2 = &hex::decode("00abcdef0123456789abcdef").unwrap();
+        assert!(traversal.is_inclusion_proof(even_extension_2).unwrap());
+    }
+
+    /// Traverses the trie path in two steps, together making a full path traversal.
+    #[test]
+    fn test_is_inclusion_proof_with_terminal_leaf_node_two_parts() {
+        // Skip partial path (an even number of nibbles, for a extension node,
+        // hence prefix '0' and padding '0')
+        let even_extension = &hex::decode("000123456789abcdef0123456789abcdef0123456789").unwrap();
+        let mut traversal = NibblePath::init(&hex::decode("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef").unwrap());
+
+        // Inclusion/exclusion proof cannot be evaluated without looking at the full path.
+        assert!(traversal.is_inclusion_proof(even_extension).is_err());
+        // Apply/traverse the first extension node.
+        traversal.skip_extension_node_nibbles(even_extension).unwrap();
+
+        // even leaf is '2' with padding '0'
+        // The path including this too-short leaf is less than 64 nibbles.
+        // So this is an attempt to declare inclusion/exclusion on an incomplete path.
+        // However a leaf cannot have an incomplete path.
+        let leaf_path_too_short = &hex::decode("20abcdef0123456789").unwrap();
+        assert!(traversal.is_inclusion_proof(leaf_path_too_short).is_err());
+
+        // Enough for a full path
+        let even_leaf = &hex::decode("20abcdef0123456789abcdef").unwrap();
+        assert!(traversal.is_inclusion_proof(even_leaf).unwrap());
+    }
+
+    #[test]
+    fn test_is_exclusion_proof_with_terminal_extension_node_early_divergence() {
+        // Path diverges immediately
+        // (an even number of nibbles, for an extension node,
+        // hence prefix '0' and padding '0')
+        let even_extension = &hex::decode("006666666666abcdef0123456789abcdef0123456789abcdef0123456789abcdef").unwrap();
+        let mut traversal = NibblePath::init(&hex::decode("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef").unwrap());
+        assert!(!traversal.is_inclusion_proof(even_extension).unwrap());
+    }
+
+    /// Traverses some of the trie path, then encounters an extension node that
+    /// does not match the path. Asserts that it is an exclusion proof.
+    #[test]
+    fn test_is_exclusion_proof_with_terminal_extension_node_later_divergence() {
+        // Traverse some of the the path (16 nibbles).
+        // (an even number of nibbles, for an extension node,
+        // hence prefix '0' and padding '0')
+        let even_extension = &hex::decode("000123456789abcdef").unwrap();
+        let mut traversal = NibblePath::init(&hex::decode("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef").unwrap());
+        traversal.skip_extension_node_nibbles(even_extension).unwrap();
+        assert_eq!(traversal.visiting_index, 16);
+        // First 6 nibbles match (15 + 6 = 21), then path diverges at index 22.
+        let divergent_even_extension = &hex::decode("00012345ffff").unwrap();
+        assert!(!traversal.is_inclusion_proof(divergent_even_extension).unwrap());
+    }
+
+    /// Traverses the trie path in two steps, together making a full path traversal.
+    #[test]
+    fn test_is_exclusion_proof_with_terminal_leaf_node() {
+        // Skip partial path (an even number of nibbles, for a extension node,
+        // hence prefix '0' and padding '0')
+        let even_extension = &hex::decode("000123456789abcdef0123456789abcdef0123456789").unwrap();
+        let mut traversal = NibblePath::init(&hex::decode("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef").unwrap());
+
+        // Inclusion/exclusion proof cannot be evaluated without looking at the full path.
+        assert!(traversal.is_inclusion_proof(even_extension).is_err());
+        // Apply/traverse the first extension node.
+        traversal.skip_extension_node_nibbles(even_extension).unwrap();
+
+        // even leaf is '2' with padding '0'
+        // The path including this too-short leaf is less than 64 nibbles.
+        // So this is an attempt to declare inclusion/exclusion on an incomplete path.
+        // However a leaf cannot have an incomplete path.
+        let leaf_path_too_short = &hex::decode("20abcdef0123456789").unwrap();
+        assert!(traversal.is_inclusion_proof(leaf_path_too_short).is_err());
+
+        // Enough for a full path, however, the leaf path diverges in the final 10 nibbles.
+        let even_leaf = &hex::decode("20abcdef0123456789666666").unwrap();
+        assert!(!traversal.is_inclusion_proof(even_leaf).unwrap());
     }
 }
