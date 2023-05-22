@@ -112,8 +112,9 @@ impl NodeKind {
         match self {
             NodeKind::Branch => {
                 // Assert value item is empty (not terminal).
-                let final_item = node.get(16).ok_or_else(||
-                    NodeError::BranchNodeHasNoValue)?;
+                let final_item = node
+                    .get(16)
+                    .ok_or_else(|| NodeError::BranchNodeHasNoValue)?;
 
                 if !final_item.is_empty() {
                     return Err(NodeError::BranchNodeHasValue);
@@ -226,15 +227,16 @@ mod test {
         rlp::decode_list(&bytes)
     }
 
-    // Checks the final node in an account inclusion proof.
+    /// Checks the final node in an account inclusion proof.
+    /// - src: account proof from ./data/test_proof_1.json
+    /// - account address: 0xaa00000000000000000000000000000000000000
+    /// - path (keccak(address)): 0x735649db80be637d281db0cc5896b0ff9869d08379a80fdc38dd073bba633949
+    ///
+    /// Two nodes:
+    /// - First node is extension node, item index 7 is traversed.
+    /// - Second node is leaf node with remaining full path, hence inclusion proof.
     #[test]
     fn test_inclusion_leaf_for_nonzero_value() {
-        // src: account proof from ./data/test_proof_1.json
-        // account address: 0xaa00000000000000000000000000000000000000
-        // path (keccak(address)): 0x735649db80be637d281db0cc5896b0ff9869d08379a80fdc38dd073bba633949
-        // Two nodes:
-        // - First node is extension node, item index 7 is traversed.
-        // - Second node is leaf node with remaining full path, hence inclusion proof.
         let node = rlp_decode_node("0xf869a0335649db80be637d281db0cc5896b0ff9869d08379a80fdc38dd073bba633949b846f8440101a08afc95b7d18a226944b9c2070b6bda1c3a36afcc3730429d47579c94b9fe5850a0ce92c756baff35fa740c3557c1a971fd24d2d35b7c8e067880d50cd86bb0bc99");
         let node_kind = NodeKind::deduce(1, 2, 2, &node).unwrap();
         assert_eq!(node_kind, NodeKind::Leaf);
@@ -248,15 +250,38 @@ mod test {
         node_kind
             .traverse_node(node, &mut traversal, &mut parent_root_to_update)
             .unwrap();
-        todo!("add another check")
     }
     #[test]
     fn test_inclusion_leaf_for_zero_value() {
         todo!()
     }
+    /// Storage proof, data from block 17190873.
+    /// - account 0x0b09dea16768f0799065c475be02919503cb2a35
+    /// - Storage key: 0x495035048c903d5331ae820b52f7c4dc5ce81ee403640178e77c00a916ba54ab
+    /// - path (keccak(key)): 0xcf1652a03292400cdc9040b230c7c8b9584f9903c1f4e2809fca09daa8670c8f
+    ///
+    /// four nodes:
+    /// - branch, follow item 0xc
+    /// - branch, follow item 0xf
+    /// - branch, follow item 0x1
+    /// - leaf node
     #[test]
     fn test_inclusion_leaf_for_nonzero_key() {
-        todo!()
+        let node = rlp_decode_node("0xf8429f3652a03292400cdc9040b230c7c8b9584f9903c1f4e2809fca09daa8670c8fa1a004996c0f7e6d68f87940591181285a446222c413f8800d35d36f298b64544dd7");
+        let node_kind = NodeKind::deduce(3, 4, 2, &node).unwrap();
+        assert_eq!(node_kind, NodeKind::Leaf);
+
+        let mut traversal = NibblePath::init(
+            &hex_decode("0xcf1652a03292400cdc9040b230c7c8b9584f9903c1f4e2809fca09daa8670c8f")
+                .unwrap(),
+        );
+        assert_eq!(traversal.visit_path_nibble().unwrap(), 0xc);
+        assert_eq!(traversal.visit_path_nibble().unwrap(), 0xf);
+        assert_eq!(traversal.visit_path_nibble().unwrap(), 0x1);
+        let mut parent_root_to_update = [0u8; 32];
+        node_kind
+            .traverse_node(node, &mut traversal, &mut parent_root_to_update)
+            .unwrap();
     }
     #[test]
     fn test_inclusion_leaf_for_zero_key() {
