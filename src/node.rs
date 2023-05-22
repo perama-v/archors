@@ -183,14 +183,14 @@ impl NodeKind {
                         }
                         Ok(ProofType::Exclusion)
                     }
-                    PathNature::SubPathDivergent => {
+                    PathNature::SubPathDiverges => {
                         if second_item.is_empty() {
                             todo!("Even in an exclusion proof, shouldn't there be a next node?")
                             // return Err(NodeError::ExclusionProofNodeHasNoNextNode);
                         }
                         Ok(ProofType::Exclusion)
                     }
-                    PathNature::FullPathMatches | PathNature::FullPathDivergent => {
+                    PathNature::FullPathMatches | PathNature::FullPathDiverges => {
                         return Err(NodeError::TerminalExtensionHasFullPath)
                     }
                 }
@@ -199,7 +199,7 @@ impl NodeKind {
                 let first_item = node.get(0).ok_or_else(|| NodeError::LeafHasNoPath)?;
                 let second_item = node.get(1).ok_or_else(|| NodeError::LeafHasNoValue)?;
                 match traversal.match_or_mismatch(first_item)? {
-                    PathNature::SubPathMatches | PathNature::SubPathDivergent => {
+                    PathNature::SubPathMatches | PathNature::SubPathDiverges => {
                         Err(NodeError::LeafHasIncompletePath)
                     }
                     PathNature::FullPathMatches => {
@@ -208,7 +208,7 @@ impl NodeKind {
                         }
                         Ok(ProofType::Inclusion(second_item.to_vec()))
                     }
-                    PathNature::FullPathDivergent => {
+                    PathNature::FullPathDiverges => {
                         todo!("Err, this is an inclusion proof for different key")
                     }
                 }

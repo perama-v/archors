@@ -132,8 +132,9 @@ impl NibblePath {
     pub fn match_or_mismatch(&mut self, final_subpath: &[u8]) -> Result<PathNature, PathError> {
         let mut temp_index = self.visiting_index;
         let subpath_nibbles = prefixed_bytes_to_nibbles(final_subpath)?;
+        let path_finished = temp_index + subpath_nibbles.len() == 64;
 
-        for skip_nibble in subpath_nibbles {
+        for skip_nibble in &subpath_nibbles {
             // Assert that the nibble matches the expected nibble
             let expected = self
                 .path
@@ -141,13 +142,14 @@ impl NibblePath {
                 // Extension is longer than path remaining.
                 .ok_or_else(|| PathError::ExtensionPathLongerThanExpected)?;
 
-            if expected != &skip_nibble {
+            if expected != skip_nibble {
                 // Extension diverges from the expected path for this key.
                 // If this proof is valid, it will be an exclusion proof.
-                if temp_index == 64 {
-                    return Ok(PathNature::FullPathDivergent);
+                if path_finished {
+                    // full 32 bytes
+                    return Ok(PathNature::FullPathDiverges);
                 }
-                return Ok(PathNature::SubPathDivergent);
+                return Ok(PathNature::SubPathDiverges);
             }
             // Walk forward
             temp_index += 1;
@@ -156,9 +158,7 @@ impl NibblePath {
             // A full path (32 bytes, 64 nibbles) must have been checked
             return Ok(PathNature::FullPathMatches);
         }
-        return Ok(PathNature::SubPathMatches);
-        // This function may not be used on non-terminal nodes.
-        Err(PathError::EvaluatedProofOnPartialPath(temp_index))
+        return Ok(PathNature::SubPathMatches)
     }
 }
 
@@ -176,11 +176,11 @@ pub enum PathNature {
     // Paths match, not yet 32 bytes
     SubPathMatches,
     // Paths diverge, not yet 32 bytes
-    SubPathDivergent,
+    SubPathDiverges,
     // 32 byte paths match
     FullPathMatches,
     // 32 byte paths diverge
-    FullPathDivergent,
+    FullPathDiverges,
 }
 
 /// Turns sequence of bytes in to sequence of nibbles. The bytes are prefixed
@@ -392,7 +392,7 @@ mod test {
     /// Traverses the trie path all in one go, by encountering an extension node
     /// that matches the entire path.
     #[test]
-    fn test_in_with_terminal_extension_node_early_extension() {
+    fn test_terminal_extension_node_early_extension() {
         // Skip entire path (an even number of nibbles, for an extension node,
         // hence prefix '0' and padding '0')
         let even_extension =
@@ -410,7 +410,7 @@ mod test {
 
     /// Traverses the trie path in two steps, together making a full path traversal.
     #[test]
-    fn test_in_with_terminal_extension_node_two_parts() {
+    fn test_terminal_extension_node_two_parts() {
         // Skip partial path (an even number of nibbles, for an extension node,
         // hence prefix '0' and padding '0')
         let even_extension_1 =
@@ -420,8 +420,10 @@ mod test {
                 .unwrap(),
         );
 
-        // Inclusion/exclusion proof cannot be evaluated without looking at the full path.
-        assert!(traversal.match_or_mismatch(even_extension_1).is_err());
+        assert_eq!(traversal.match_or_mismatch(even_extension_1).unwrap(),
+            PathNature::SubPathMatches);
+        assert_eq!(traversal.match_or_mismatch(&hex::decode("000123444444").unwrap()).unwrap(),
+            PathNature::SubPathDiverges);
         // Apply/traverse the first extension node.
         traversal
             .skip_extension_node_nibbles(even_extension_1)
@@ -434,18 +436,17 @@ mod test {
             PathNature::FullPathMatches
         );
 
-        let even_extension_3 = &hex::decode("00abcdef0123456789").unwrap();
-        // An exclusion proof should diverge before the final nibble of the path.
-        todo!("check");
+        let even_extension_3 = &hex::decode("00abcdef0123456789abcde9").unwrap();
+        // Path that diverges in the final nibble.
         assert_eq!(
             traversal.match_or_mismatch(even_extension_3).unwrap(),
-            PathNature::SubPathDivergent
+            PathNature::FullPathDiverges
         );
     }
 
     /// Traverses the trie path in two steps, together making a full path traversal.
     #[test]
-    fn test_in_with_terminal_leaf_node_two_parts() {
+    fn test_terminal_leaf_node_two_parts() {
         // Skip partial path (an even number of nibbles, for a extension node,
         // hence prefix '0' and padding '0')
         let even_extension = &hex::decode("000123456789abcdef0123456789abcdef0123456789").unwrap();
@@ -455,7 +456,7 @@ mod test {
         );
 
         // Inclusion/exclusion proof cannot be evaluated without looking at the full path.
-        assert!(traversal.match_or_mismatch(even_extension).is_err());
+        assert_eq!(traversal.match_or_mismatch(even_extension).unwrap(), PathNature::SubPathMatches);
         // Apply/traverse the first extension node.
         traversal
             .skip_extension_node_nibbles(even_extension)
@@ -466,7 +467,7 @@ mod test {
         // So this is an attempt to declare inclusion/exclusion on an incomplete path.
         // However a leaf cannot have an incomplete path.
         let leaf_path_too_short = &hex::decode("20abcdef0123456789").unwrap();
-        assert!(traversal.match_or_mismatch(leaf_path_too_short).is_err());
+        assert_eq!(traversal.match_or_mismatch(leaf_path_too_short).unwrap(), PathNature::SubPathMatches);
 
         // Enough for a full path
         let even_leaf = &hex::decode("20abcdef0123456789abcdef").unwrap();
@@ -490,7 +491,7 @@ mod test {
         );
         assert_eq!(
             traversal.match_or_mismatch(even_extension).unwrap(),
-            PathNature::FullPathDivergent
+            PathNature::FullPathDiverges
         );
     }
 
@@ -516,7 +517,7 @@ mod test {
             traversal
                 .match_or_mismatch(divergent_even_extension)
                 .unwrap(),
-            PathNature::SubPathDivergent
+            PathNature::SubPathDiverges
         );
     }
 
@@ -532,7 +533,7 @@ mod test {
         );
 
         // Inclusion/exclusion proof cannot be evaluated without looking at the full path.
-        assert!(traversal.match_or_mismatch(even_extension).is_err());
+        assert_eq!(traversal.match_or_mismatch(even_extension).unwrap(), PathNature::SubPathMatches);
         // Apply/traverse the first extension node.
         traversal
             .skip_extension_node_nibbles(even_extension)
@@ -543,13 +544,14 @@ mod test {
         // So this is an attempt to declare inclusion/exclusion on an incomplete path.
         // However a leaf cannot have an incomplete path.
         let leaf_path_too_short = &hex::decode("20abcdef0123456789").unwrap();
-        assert!(traversal.match_or_mismatch(leaf_path_too_short).is_err());
+        assert_eq!(traversal.match_or_mismatch(leaf_path_too_short).unwrap(),
+            PathNature::SubPathMatches);
 
         // Enough for a full path, however, the leaf path diverges in the final 10 nibbles.
         let even_leaf = &hex::decode("20abcdef0123456789666666").unwrap();
         assert_eq!(
             traversal.match_or_mismatch(even_leaf).unwrap(),
-            PathNature::FullPathDivergent
+            PathNature::FullPathDiverges
         );
     }
 }
