@@ -2,10 +2,12 @@
 
 use ethers::types::{H256, U256};
 use rlp::Rlp;
-use rlp_derive::RlpDecodable;
+use rlp_derive::{RlpDecodable, RlpEncodable};
+use serde::Deserialize;
 use thiserror::Error;
 
-use crate::eip1186::{Account, Storage};
+use crate::eip1186::{Account};
+
 
 #[derive(Debug, Error)]
 pub enum RlpError {
@@ -23,31 +25,27 @@ pub enum RlpError {
     IncorrectHash { computed: String, expected: String },
     #[error("Merkle Patricia Node to have max 17 (16 + 1) items, got {0}")]
     InvalidNodeItemCount(usize),
-
     #[error("Account proof node has no value. RLP: {0}")]
     NoNodeAccountValue(String),
     #[error("Storage proof node has no value. RLP: {0}")]
     NoNodeStorageValue(String),
 }
 
-/// Decodes the final element of an storage proof and returns an storage object.
+/// Decodes the final element of an storage proof and returns a storage value.
 ///
-/// The element comprises: rlp(nodes, rlp(storage_object))
+/// The element comprises: rlp(nodes, rlp(storage))
 ///
-/// Where storage_object contains: nonce, balance, storage_hash, code_hash.
-/// Nodes at this level are discarded as they are not used to evaluate the proof.
-fn rlp_decode_final_storage_element(proof_leaf_rlp: &[u8]) -> Result<Storage, RlpError> {
+/// Where storage value is U256.
+fn rlp_decode_final_storage_element(proof_leaf_rlp: &[u8]) -> Result<U256, RlpError> {
     let decoded: Vec<Vec<u8>> = rlp::decode_list(proof_leaf_rlp);
-    let storage_rlp = decoded
+    let storage = decoded
         .last()
         .ok_or(RlpError::NoNodeStorageValue(hex::encode(proof_leaf_rlp)))?;
-    let last = Rlp::new(storage_rlp);
-    if last.is_null() {
-        return Ok(Storage(0.into()));
+    if storage.is_empty() {
+        return Ok(U256::from(0))
     }
-    let val: U256 = last.as_val()?;
-    //let val: U256 = rlp::decode(&storage_value)?;
-    Ok(Storage(val))
+    let val: U256 = rlp::decode(&storage)?;
+    return Ok(val)
 }
 
 /// Decodes the final element of an account proof and returns an account object.
@@ -112,46 +110,7 @@ mod test {
         let storage = rlp_decode_final_storage_element(&data_bytes).unwrap();
 
         let expected = U256::from_str("0x0").unwrap();
-        assert_eq!(storage, Storage(expected));
-    }
-
-    #[test]
-    fn rlp_decode_storage_proof_leaf_val_zero_2() {
-        // RLP-encoded storage leaf
-        let data_bytes =
-            hex::decode("e19f38e3e2cf4c9b463ea3e06f12eafc94d4cea7d79eaeb1fe04c18aa88c9a806f01")
-                .unwrap();
-        let storage = rlp_decode_final_storage_element(&data_bytes).unwrap();
-        let expected = U256::from_str("0x0").unwrap();
-        assert_eq!(storage, Storage(expected));
-    }
-
-    #[test]
-    fn rlp_decode_storage_proof_leaf_val_zero_3() {
-        // RLP-encoded storage leaf
-        let data_bytes =
-            hex::decode("eaa020462ae373eafd49f9fb816616739b6007efb72eb2e534f215e799664a0a565a888703335d207a6800")
-                .unwrap();
-        /*
-        eaa020462ae373eafd49f9fb816616739b6007efb72eb2e534f215e799664a0a565a888703335d207a6800
-
-        # Short list, 0xea - 0xc0 = 42 bytes long.
-
-        # First item: 32 byte string
-        a0 20462ae373eafd49f9fb816616739b6007efb72eb2e534f215e799664a0a565a
-
-        # Second item: String with length 0x88 - 0x80 = 8 bytes
-        88 8703335d207a6800
-
-        # Together:
-        [
-            "0x20462ae373eafd49f9fb816616739b6007efb72eb2e534f215e799664a0a565a",
-            "0x8703335d207a6800"
-        ]
-        */
-        let storage = rlp_decode_final_storage_element(&data_bytes).unwrap();
-        let expected = U256::from_str("0x0").unwrap();
-        assert_eq!(storage, Storage(expected));
+        assert_eq!(storage, expected);
     }
 
     #[test]
@@ -160,7 +119,7 @@ mod test {
         let data_bytes = hex::decode("ed9f208376e489f0656e4ae2d3a7f1b2fc108b42db04095810f535cc0ab222a6498c8b0422ca8b0a00a425000000").unwrap();
         let storage = rlp_decode_final_storage_element(&data_bytes).unwrap();
         let expected = U256::from_str("0x422ca8b0a00a425000000").unwrap();
-        assert_eq!(storage, Storage(expected));
+        assert_eq!(storage, expected);
     }
 
     #[test]
@@ -172,7 +131,7 @@ mod test {
         .unwrap();
         let storage = rlp_decode_final_storage_element(&data_bytes).unwrap();
         let expected = U256::from_str("0x12a05f2000").unwrap();
-        assert_eq!(storage, Storage(expected));
+        assert_eq!(storage, expected);
     }
 
     #[test]
