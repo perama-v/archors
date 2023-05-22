@@ -1,6 +1,6 @@
+use ethers::types::{Block, EIP1186ProofResponse, H256};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use web3::types::{Proof, H256};
 
 use crate::types::{AccountToProve, TransactionAccountStates};
 
@@ -8,7 +8,7 @@ use crate::types::{AccountToProve, TransactionAccountStates};
 pub(crate) struct AccountProofResponse {
     id: u32,
     jsonrpc: String,
-    pub(crate) result: Proof,
+    pub(crate) result: EIP1186ProofResponse,
 }
 
 #[derive(Debug, Serialize)]
@@ -23,7 +23,7 @@ pub(crate) struct JsonRpcRequest {
 pub(crate) struct BlockResponse {
     id: u32,
     jsonrpc: String,
-    pub(crate) result: web3::types::Block<H256>,
+    pub(crate) result: Block<H256>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

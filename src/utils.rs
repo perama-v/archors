@@ -3,13 +3,9 @@ use std::{
     io::{self, Read},
 };
 
+use ethers::{types::{U256, H256}, utils::keccak256};
 use hex::FromHexError;
 use thiserror::Error;
-use web3::{
-    ethabi::ethereum_types::BigEndianHash,
-    signing::keccak256,
-    types::{H256, U256},
-};
 
 #[derive(Debug, Error)]
 pub enum UtilsError {
@@ -44,19 +40,4 @@ pub fn compress(ssz_bytes: Vec<u8>) -> Result<Vec<u8>, UtilsError> {
     let mut buffer = vec![];
     snap::read::FrameEncoder::new(ssz_bytes.as_slice()).read_to_end(&mut buffer)?;
     Ok(buffer)
-}
-
-pub fn u256_to_hex(int: U256) -> String {
-    format!("0x{:x}", int)
-}
-
-pub fn u256_keccak_hash(int: &U256) -> [u8; 32] {
-    let data = H256::from_uint(int);
-    keccak256(data.as_bytes())
-}
-
-pub fn u256_to_bytes(int: &U256) -> [u8; 32] {
-    let mut bytes = [0u8; 32];
-    int.to_big_endian(&mut bytes);
-    bytes
 }

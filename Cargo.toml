@@ -7,23 +7,18 @@ description = "Tool for single Ethereum archival block state proofs"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-eth_trie = "0.1.0"
-hash-db = { git = "https://github.com/paritytech/trie" }
+ethers = "2.0.4"
 hex = "0.4.3"
-serde = {  version = "1.0.152", features = ["derive"] }
-serde_json = "1.0.94"
-web3 = "0.18.0"
-ethereum-types = "0.14.1"
 reqwest = { version = "0.11.14", features = ["json"] }
-tokio = { version = "1.26.0", features = ["full"] }
-url = "2.3.1"
-thiserror = "1.0.40"
-trie-eip1186 = { git = "https://github.com/paritytech/trie" }
-snap = "1.1.0"
-ssz_rs = "0.8.0"
 rlp = "0.5.2"
 rlp-derive = "0.1.0"
-ethers = "2.0.4"
+snap = "1.1.0"
+serde = {  version = "1.0.152", features = ["derive"] }
+serde_json = "1.0.94"
+ssz_rs = "0.8.0"
+thiserror = "1.0.40"
+tokio = { version = "1.26.0", features = ["full"] }
+url = "2.3.1"
 
 [dev-dependencies]
 anyhow = "1.0.69"

@@ -10,7 +10,8 @@ use thiserror::Error;
 
 use crate::{
     proof::{ProofError, Verified, Verifier},
-    rlp::RlpError, utils::hex_encode,
+    rlp::RlpError,
+    utils::hex_encode,
 };
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, Deserialize, RlpEncodable, RlpDecodable)]
@@ -81,7 +82,7 @@ pub enum StorageError {
 /// proof is of the form returned by eth_getProof.
 pub fn verify_proof(
     block_state_root: &[u8],
-    proof: EIP1186ProofResponse,
+    proof: &EIP1186ProofResponse,
 ) -> Result<(), VerifyProofError> {
     // Account
     verify_account_component(block_state_root, &proof).map_err(|source| {
@@ -92,12 +93,12 @@ pub fn verify_proof(
     })?;
 
     // Storage proofs for this account
-    for storage_proof in proof.storage_proof {
+    for storage_proof in &proof.storage_proof {
         verify_account_storage_component(&proof.storage_hash.0, storage_proof.clone()).map_err(
             |source| VerifyProofError::StorageError {
                 source,
                 account: hex_encode(proof.address),
-                storage_key: hex::encode(storage_proof.key),
+                storage_key: hex_encode(storage_proof.key),
             },
         )?;
     }
@@ -177,7 +178,7 @@ mod test {
         let state_root =
             hex::decode("61effbbcca94f0d3e02e5bd22e986ad57142acabf0cb3d129a6ad8d0f8752e94")
                 .unwrap();
-        verify_proof(&state_root, account_proof).expect("could not verify proof");
+        verify_proof(&state_root, &account_proof).expect("could not verify proof");
     }
 
     /// data src: https://github.com/gakonst/ethers-rs/blob/master/ethers-core/testdata/proof.json
@@ -187,6 +188,6 @@ mod test {
         let state_root =
             hex::decode("57e6e864257daf9d96aaca31edd0cfe4e3892f09061e727c57ab56197dd59287")
                 .unwrap();
-        verify_proof(&state_root, account_proof).expect("could not verify proof");
+        verify_proof(&state_root, &account_proof).expect("could not verify proof");
     }
 }

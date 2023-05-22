@@ -1,17 +1,15 @@
 use std::{collections::HashMap, fmt::Display};
 
-use ethers::types::{U256, U64};
-use rlp_derive::{RlpDecodable, RlpEncodable};
+use ethers::types::{EIP1186ProofResponse, H256};
 use serde::{Deserialize, Serialize};
-use web3::types::{Proof, H256};
 
-use crate::{proof::ProofError, utils::hex_decode};
+use crate::{proof::ProofError, utils::hex_decode, eip1186::{verify_proof, VerifyProofError}};
 
 /// Helper for caching
 #[derive(Deserialize, Serialize)]
 pub struct BlockProofs {
     /// Map of account -> proof
-    pub proofs: HashMap<String, Proof>,
+    pub proofs: HashMap<String, EIP1186ProofResponse>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -132,10 +130,10 @@ impl BlockStateAccesses {
 
 impl BlockProofs {
     /// Verifies the proofs present for the block with respect to a state root.
-    pub fn verify(&self) -> Result<(), ProofError> {
+    pub fn verify(&self, state_root: &[u8]) -> Result<(), VerifyProofError> {
         for (account, proof) in &self.proofs {
-            let account_string = hex_decode(account)?;
-            // verify_proof(&account_string, proof)?
+            println!("proof for account {account} ok");
+            verify_proof(&state_root, proof)?
         }
         Ok(())
     }
