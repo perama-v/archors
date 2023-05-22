@@ -4,6 +4,7 @@ use ethers::{
     types::{Bytes, EIP1186ProofResponse, StorageProof, H256, U256, U64},
     utils::keccak256,
 };
+use rlp::encode;
 use rlp_derive::{RlpDecodable, RlpEncodable};
 use serde::Deserialize;
 use thiserror::Error;
@@ -29,15 +30,6 @@ impl Account {
     }
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Eq, Deserialize, RlpEncodable, RlpDecodable)]
-pub struct Storage(pub U256);
-
-impl Storage {
-    fn is_empty(&self) -> bool {
-        let empty = Storage::default();
-        self.eq(&empty)
-    }
-}
 
 #[derive(Debug, Error)]
 pub enum VerifyProofError {
@@ -138,18 +130,19 @@ fn verify_account_storage_component(
     storage_hash: &[u8; 32],
     storage_proof: StorageProof,
 ) -> Result<(), StorageError> {
-    let claimed_storage = Storage(storage_proof.value);
+    // let claimed_storage = Storage(storage_proof.value);
+    let claimed_value = storage_proof.value;
 
     let storage_proof = Verifier::new_single_proof(
         storage_proof.proof,
         *storage_hash,
         keccak256(&storage_proof.key),
-        rlp::encode(&claimed_storage).to_vec(),
+        rlp::encode(&claimed_value).to_vec(),
     );
 
     match storage_proof.verify()? {
         Verified::Inclusion => {}
-        Verified::Exclusion => match claimed_storage.is_empty() {
+        Verified::Exclusion => match claimed_value.is_zero() {
             true => {}
             false => return Err(StorageError::ClaimedStorageNotEmpty),
         },
@@ -158,6 +151,8 @@ fn verify_account_storage_component(
 }
 
 mod test {
+    use crate::utils::hex_decode;
+
     use super::*;
     use std::{fs::File, io::BufReader};
 
@@ -176,7 +171,7 @@ mod test {
     fn test_verify_inclusion_proof_of_storage_value_zero() {
         let account_proof = load_proof("data/test_proof_1.json");
         let state_root =
-            hex::decode("61effbbcca94f0d3e02e5bd22e986ad57142acabf0cb3d129a6ad8d0f8752e94")
+            hex_decode("0x61effbbcca94f0d3e02e5bd22e986ad57142acabf0cb3d129a6ad8d0f8752e94")
                 .unwrap();
         verify_proof(&state_root, &account_proof).expect("could not verify proof");
     }
@@ -186,7 +181,17 @@ mod test {
     fn test_verify_exclusion_proof_for_storage_key_zero() {
         let account_proof = load_proof("data/test_proof_2.json");
         let state_root =
-            hex::decode("57e6e864257daf9d96aaca31edd0cfe4e3892f09061e727c57ab56197dd59287")
+            hex_decode("0x57e6e864257daf9d96aaca31edd0cfe4e3892f09061e727c57ab56197dd59287")
+                .unwrap();
+        verify_proof(&state_root, &account_proof).expect("could not verify proof");
+    }
+
+    /// data src: block 17190873
+    #[test]
+    fn test_verify_inclusion_proof_for_nonzero_storage_value() {
+        let account_proof = load_proof("data/test_proof_3.json");
+        let state_root =
+            hex_decode("0x38e5e1dd67f7873cd8cfff08685a30734c18d0075318e9fca9ed64cc28a597da")
                 .unwrap();
         verify_proof(&state_root, &account_proof).expect("could not verify proof");
     }
