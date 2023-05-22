@@ -23,6 +23,7 @@ snap = "1.1.0"
 ssz_rs = "0.8.0"
 rlp = "0.5.2"
 rlp-derive = "0.1.0"
+ethers = "2.0.4"
 
 [dev-dependencies]
 anyhow = "1.0.69"

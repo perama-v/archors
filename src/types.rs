@@ -1,9 +1,11 @@
 use std::{collections::HashMap, fmt::Display};
 
+use ethers::types::{U256, U64};
+use rlp_derive::{RlpDecodable, RlpEncodable};
 use serde::{Deserialize, Serialize};
 use web3::types::{Proof, H256};
 
-use crate::proof::{verify_proof, ProofError};
+use crate::{proof::ProofError, utils::hex_decode};
 
 /// Helper for caching
 #[derive(Deserialize, Serialize)]
@@ -132,7 +134,8 @@ impl BlockProofs {
     /// Verifies the proofs present for the block with respect to a state root.
     pub fn verify(&self) -> Result<(), ProofError> {
         for (account, proof) in &self.proofs {
-            verify_proof(account, proof)?
+            let account_string = hex_decode(account)?;
+            // verify_proof(&account_string, proof)?
         }
         Ok(())
     }

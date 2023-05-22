@@ -21,7 +21,7 @@ use serde::Deserialize;
 use thiserror::Error;
 
 /// An error with the Merkle Patricia Trie path.
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Eq, PartialEq)]
 pub enum PathError {
     #[error("Branch node (non-terminal) has value, expected none")]
     BranchNodeHasValue,

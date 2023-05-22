@@ -1,15 +1,11 @@
 //! For Recursive Length Prefix encoding/decoding
 
-use ethers::types::U256;
+use ethers::types::{H256, U256};
 use rlp::Rlp;
-use rlp_derive::{RlpDecodable, RlpEncodable};
-use serde::Deserialize;
+use rlp_derive::RlpDecodable;
 use thiserror::Error;
 
-use crate::eip1186::Account;
-
-#[derive(Default, Debug, Clone, PartialEq, Eq, Deserialize, RlpEncodable, RlpDecodable)]
-struct Storage(U256);
+use crate::eip1186::{Account, Storage};
 
 #[derive(Debug, Error)]
 pub enum RlpError {
@@ -21,7 +17,6 @@ pub enum RlpError {
     DecodeError(#[from] rlp::DecoderError),
     #[error("Proof is empty")]
     EmptyProof,
-
     #[error(
         "Hash of node {computed} does not match the expected hash in the parent node {expected}"
     )]
@@ -42,8 +37,8 @@ pub enum RlpError {
 /// Where storage_object contains: nonce, balance, storage_hash, code_hash.
 /// Nodes at this level are discarded as they are not used to evaluate the proof.
 fn rlp_decode_final_storage_element(proof_leaf_rlp: &[u8]) -> Result<Storage, RlpError> {
-    let rlp: Vec<Vec<u8>> = rlp::decode_list(proof_leaf_rlp);
-    let storage_rlp = rlp
+    let decoded: Vec<Vec<u8>> = rlp::decode_list(proof_leaf_rlp);
+    let storage_rlp = decoded
         .last()
         .ok_or(RlpError::NoNodeStorageValue(hex::encode(proof_leaf_rlp)))?;
     let last = Rlp::new(storage_rlp);
@@ -62,8 +57,8 @@ fn rlp_decode_final_storage_element(proof_leaf_rlp: &[u8]) -> Result<Storage, Rl
 /// Where account_object contains: nonce, balance, storage_hash, code_hash.
 /// Nodes at this level are discarded as they are not used to evaluate the proof.
 pub fn rlp_decode_final_account_element(proof_leaf_rlp: &[u8]) -> Result<Account, RlpError> {
-    let rlp: Vec<Vec<u8>> = rlp::decode_list(proof_leaf_rlp);
-    let account_rlp = rlp
+    let decoded: Vec<Vec<u8>> = rlp::decode_list(proof_leaf_rlp);
+    let account_rlp = decoded
         .last()
         .ok_or(RlpError::NoNodeAccountValue(hex::encode(proof_leaf_rlp)))?;
     let account: Account = rlp::decode(account_rlp)?;
