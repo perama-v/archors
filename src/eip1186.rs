@@ -1,7 +1,7 @@
 //! Verifies an EIP-1186 style proof
 
 use ethers::{
-    types::{Bytes, EIP1186ProofResponse, H256, U256, U64},
+    types::{Bytes, EIP1186ProofResponse, StorageProof, H256, U256, U64},
     utils::keccak256,
 };
 use rlp_derive::{RlpDecodable, RlpEncodable};
@@ -9,8 +9,8 @@ use serde::Deserialize;
 use thiserror::Error;
 
 use crate::{
-    proof::{ProofError, Verifier},
-    rlp::{rlp_decode_final_account_element, RlpError},
+    proof::{ProofError, Verified, Verifier},
+    rlp::RlpError, utils::hex_encode,
 };
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, Deserialize, RlpEncodable, RlpDecodable)]
@@ -19,6 +19,23 @@ pub struct Account {
     pub balance: U256,
     pub storage_hash: H256,
     pub code_hash: H256,
+}
+
+impl Account {
+    fn is_empty(&self) -> bool {
+        let empty = Account::default();
+        self.eq(&empty)
+    }
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Eq, Deserialize, RlpEncodable, RlpDecodable)]
+pub struct Storage(pub U256);
+
+impl Storage {
+    fn is_empty(&self) -> bool {
+        let empty = Storage::default();
+        self.eq(&empty)
+    }
 }
 
 #[derive(Debug, Error)]
@@ -44,16 +61,21 @@ pub enum VerifyProofError {
 pub enum AccountError {
     #[error("ProofError {0}")]
     ProofError(#[from] ProofError),
-    #[error("Account in the proof did not match expected value")]
-    IncorrectAccount,
     #[error("Proof is empty")]
     EmptyProof,
     #[error("RlPError {0}")]
     RlpError(#[from] RlpError),
+    #[error("A valid exclusion proof exists, but the claimed account is not empty")]
+    ClaimedAccountNotEmpty,
 }
 
 #[derive(Debug, Error)]
-pub enum StorageError {}
+pub enum StorageError {
+    #[error("ProofError {0}")]
+    ProofError(#[from] ProofError),
+    #[error("A valid exclusion proof exists, but the claimed storage is not empty")]
+    ClaimedStorageNotEmpty,
+}
 
 /// Verifies a single account proof with respect to a state roof. The
 /// proof is of the form returned by eth_getProof.
@@ -61,17 +83,20 @@ pub fn verify_proof(
     block_state_root: &[u8],
     proof: EIP1186ProofResponse,
 ) -> Result<(), VerifyProofError> {
-    let account =
     // Account
-    verify_account_component(block_state_root, &proof)
-        .map_err(|source| VerifyProofError::AccountError { source, account: hex::encode(proof.address) })?;
+    verify_account_component(block_state_root, &proof).map_err(|source| {
+        VerifyProofError::AccountError {
+            source,
+            account: hex_encode(proof.address),
+        }
+    })?;
 
     // Storage proofs for this account
-    for storage_proof in &proof.storage_proof {
-        verify_account_storage_component(&proof.storage_hash.0, &storage_proof.proof).map_err(
+    for storage_proof in proof.storage_proof {
+        verify_account_storage_component(&proof.storage_hash.0, storage_proof.clone()).map_err(
             |source| VerifyProofError::StorageError {
                 source,
-                account: hex::encode(proof.address),
+                account: hex_encode(proof.address),
                 storage_key: hex::encode(storage_proof.key),
             },
         )?;
@@ -83,45 +108,52 @@ pub fn verify_account_component(
     block_state_root: &[u8],
     proof: &EIP1186ProofResponse,
 ) -> Result<(), AccountError> {
-    // Account proof
-    let account_proof_final_level: &Bytes =
-        proof.account_proof.last().ok_or(AccountError::EmptyProof)?;
-    // Check account values correct.
-    let derived_account: Account = rlp_decode_final_account_element(&account_proof_final_level.0)?;
-
     let claimed_account = Account {
         nonce: proof.nonce,
         balance: proof.balance,
         storage_hash: proof.storage_hash,
         code_hash: proof.code_hash,
     };
-    if !derived_account.eq(&claimed_account) {
-        // redundant, remove once checked in proof_single_path_check.
-        return Err(AccountError::IncorrectAccount);
-    }
 
-    let root_hash = H256::from_slice(block_state_root);
-    // Check account proof structure.
     let account_proof = Verifier::new_single_proof(
         proof.account_proof.clone(),
-        root_hash.0,
+        H256::from_slice(block_state_root).0,
         keccak256(proof.address.as_bytes()),
-        rlp::encode(&claimed_account).into(),
+        rlp::encode(&claimed_account).to_vec(),
     );
-    account_proof.verify()?;
 
-    // Storage proofs for this account
-    for received_storage_proof in &proof.storage_proof {
-        todo!()
+    match account_proof.verify()? {
+        Verified::Inclusion => {}
+        Verified::Exclusion => match claimed_account.is_empty() {
+            true => {}
+            false => return Err(AccountError::ClaimedAccountNotEmpty),
+        },
     }
     Ok(())
 }
 
+/// Verfies a single storage proof with respect to a known storage hash.
 fn verify_account_storage_component(
-    block_state_root: &[u8],
-    proof: &[Bytes],
+    storage_hash: &[u8; 32],
+    storage_proof: StorageProof,
 ) -> Result<(), StorageError> {
-    todo!();
+    let claimed_storage = Storage(storage_proof.value);
+
+    let storage_proof = Verifier::new_single_proof(
+        storage_proof.proof,
+        *storage_hash,
+        keccak256(&storage_proof.key),
+        rlp::encode(&claimed_storage).to_vec(),
+    );
+
+    match storage_proof.verify()? {
+        Verified::Inclusion => {}
+        Verified::Exclusion => match claimed_storage.is_empty() {
+            true => {}
+            false => return Err(StorageError::ClaimedStorageNotEmpty),
+        },
+    }
+    Ok(())
 }
 
 mod test {
@@ -140,7 +172,7 @@ mod test {
     /// {"jsonrpc":"2.0","id":1,"method":"eth_getProof","params":["0xaa00000000000000000000000000000000000000",["0x01"],"0x3"]}
     /// ```
     #[test]
-    fn test_verify_inclusion_proof_of_zero_storage() {
+    fn test_verify_inclusion_proof_of_storage_value_zero() {
         let account_proof = load_proof("data/test_proof_1.json");
         let state_root =
             hex::decode("61effbbcca94f0d3e02e5bd22e986ad57142acabf0cb3d129a6ad8d0f8752e94")
@@ -150,7 +182,7 @@ mod test {
 
     /// data src: https://github.com/gakonst/ethers-rs/blob/master/ethers-core/testdata/proof.json
     #[test]
-    fn test_verify_exclusion_proof_for_zero_key() {
+    fn test_verify_exclusion_proof_for_storage_key_zero() {
         let account_proof = load_proof("data/test_proof_2.json");
         let state_root =
             hex::decode("57e6e864257daf9d96aaca31edd0cfe4e3892f09061e727c57ab56197dd59287")
