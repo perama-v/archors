@@ -1,5 +1,8 @@
 //! For verifying a generic proof kind.
-use ethers::{types::Bytes, utils::keccak256};
+use ethers::{
+    types::{Bytes, U256},
+    utils::keccak256,
+};
 use hex::FromHexError;
 use rlp::{self, Rlp};
 use rlp_derive::{RlpDecodable, RlpEncodable};
@@ -23,12 +26,18 @@ pub enum ProofError {
     DecodeError(#[from] rlp::DecoderError),
     #[error("Proof is empty")]
     EmptyProof,
+    #[error("The final node in the proof should have been detected and assessed")]
+    FailedToHandleFinalNode,
     #[error("RLP decode error {0}")]
     FromHexError(#[from] FromHexError),
     #[error(
         "Hash of node {computed} does not match the expected hash in the parent node {expected}"
     )]
     IncorrectHash { computed: String, expected: String },
+    #[error(
+        "The claimed proof value ({claimed}) is different from the value in the proof ({expected})"
+    )]
+    IncorrectLeafValue { claimed: String, expected: String },
     #[error("Merkle Patricia Node to have max 17 (16 + 1) items, got {0}")]
     InvalidNodeItemCount(usize),
     #[error("Node (index = {node_index} error {source}")]
@@ -61,7 +70,7 @@ struct SingleProofPath {
     /// Anticipated trie path to traverse for the proof.
     path: [u8; 32],
     /// Claimed value to be proven. E.g., RLP(account), or RLP(storage_value)
-    value: Vec<u8>,
+    claimed_value: Vec<u8>,
 }
 
 /// Holds information useful during a proof verification.
@@ -74,18 +83,18 @@ impl Verifier {
         proof: Vec<Bytes>,
         root: [u8; 32],
         path: [u8; 32],
-        value: Vec<u8>,
+        claimed_value: Vec<u8>,
     ) -> Self {
         Verifier {
             data: SingleProofPath {
                 proof,
                 root,
                 path,
-                value,
+                claimed_value,
             },
         }
     }
-    pub fn verify(&self) -> Result<(), ProofError> {
+    pub fn verify(&self) -> Result<Verified, ProofError> {
         // Traverse path
         let total_nodes = self.data.proof.len();
         if total_nodes == 0 {
@@ -98,25 +107,30 @@ impl Verifier {
             node_hash_correct(&rlp_node.0, parent_hash)?;
 
             let node: Vec<Vec<u8>> = rlp::decode_list(&rlp_node.0);
-            let status = NodeKind::deduce(node_index, total_nodes, node.len())
-                .map_err(|source| ProofError::NodeError { source, node_index })?;
-            let path_nibble = traversal
-                .visit_path_nibble()
-                .map_err(|source| ProofError::PathError { source, node_index })?;
 
-            let proof_type = status
-                .check_contents(node, path_nibble.into(), &mut traversal, &mut parent_hash)
-                .map_err(|source| ProofError::NodeError { source, node_index })?;
-            match proof_type {
-                //todo!("handle check of leaf bytes / exclusion proof values.");
-                ProofType::Inclusion(_) => todo!(),
-                ProofType::Exclusion => todo!(),
-                ProofType::Pending => {}
-            };
+            let verification = NodeKind::deduce(node_index, total_nodes, node.len(), &node)
+                .map_err(|source| ProofError::NodeError { source, node_index })?
+                .traverse_node(node, &mut traversal, &mut parent_hash)
+                .map_err(|source| ProofError::NodeError { source, node_index })?
+                .get_verification_of_value(&self.data.claimed_value)?;
+
+            if let Some(verified) = verification {
+                return Ok(verified);
+            }
         }
         // If end up with a value ensure it equals self.data.value
-        Ok(())
+        Err(ProofError::FailedToHandleFinalNode)
     }
+}
+
+/// THe verification kind is returned to the caller.
+///
+/// An exclusion proof for a key does not contain information about the value
+/// of that key. The caller can make an assessment if the value for an
+/// exclusion proof is valid, depending on the context (storage or account).
+pub enum Verified {
+    Inclusion,
+    Exclusion,
 }
 
 /// Checks that the hash of one node is correct.
@@ -131,11 +145,51 @@ fn node_hash_correct(rlp_node: &[u8], parent_hash: [u8; 32]) -> Result<(), Proof
 }
 
 pub enum ProofType {
-    /// Inclusion proof with leaf bytes for verification.
+    /// Inclusion proof with leaf bytes from the proof.
     Inclusion(Vec<u8>),
     Exclusion,
     /// Not yet finished processing the proof.
     Pending,
+}
+
+impl ProofType {
+    /// For proofs that have been checked to the terminal node, checks that the proof
+    /// supports the claimed value.
+    ///
+    /// ## Inclusion proof
+    /// The claimed value must match the proof leaf value.
+    /// The value could be anything, including the zero value. For example:
+    /// - Storage proof: rlp(0x1), rlp(0xabcd...1234), rlp(0x0)
+    /// - Account proof: rlp(arbitrary_EOA), rlp(arbitrary_contract), rlp(account_selfdestructed), rlp(account_uninitialized_but_nonzero_balance) etc.
+    ///
+    /// ## Exclusion proof
+    /// An exclusion proof is a claim that the key does not exist in the trie.
+    /// The claimed value therefore must be the 'untouched value'. For example:
+    /// - Storage proof: rlp(0x0)
+    /// - Account proof: rlp(untouched_account_with_default_values)
+    ///
+    /// The value for this non-existent key is not in the proof, and so the claimed
+    /// value must be evaluated by the caller.
+    fn get_verification_of_value(
+        &self,
+        claimed_rlp_value: &[u8],
+    ) -> Result<Option<Verified>, ProofError> {
+        match self {
+            ProofType::Inclusion(proof_leaf_rlp_bytes) => {
+                match claimed_rlp_value == proof_leaf_rlp_bytes {
+                    true => return Ok(Some(Verified::Inclusion)),
+                    false => {
+                        return Err(ProofError::IncorrectLeafValue {
+                            claimed: hex_encode(claimed_rlp_value),
+                            expected: hex_encode(proof_leaf_rlp_bytes),
+                        })
+                    }
+                }
+            }
+            ProofType::Exclusion => return Ok(Some(Verified::Exclusion)),
+            ProofType::Pending => return Ok(None),
+        }
+    }
 }
 
 /// A merkle patricia trie node at any level/height of an account proof.
