@@ -4,9 +4,15 @@ version = "0.1.0"
 edition = "2021"
 description = "Tool for single Ethereum archival block state proofs"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[workspace]
+members = [
+    "archors-verify"
+]
+
+
 
 [dependencies]
+archors_verify = { path = "archors-verify"}
 ethers = "2.0.4"
 hex = "0.4.3"
 reqwest = { version = "0.11.14", features = ["json"] }

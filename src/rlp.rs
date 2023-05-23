@@ -3,7 +3,7 @@
 use ethers::types::U256;
 use thiserror::Error;
 
-use crate::eip1186::Account;
+use archors_verify::eip1186::Account;
 
 #[derive(Debug, Error)]
 pub enum RlpError {

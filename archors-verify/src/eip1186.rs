@@ -11,7 +11,6 @@ use thiserror::Error;
 
 use crate::{
     proof::{ProofError, Verified, Verifier},
-    rlp::RlpError,
     utils::hex_encode,
 };
 
@@ -55,8 +54,6 @@ pub enum AccountError {
     ProofError(#[from] ProofError),
     #[error("Proof is empty")]
     EmptyProof,
-    #[error("RlPError {0}")]
-    RlpError(#[from] RlpError),
     #[error("A valid exclusion proof exists, but the claimed account is not empty")]
     ClaimedAccountNotEmpty,
 }

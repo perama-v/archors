@@ -1,9 +1,8 @@
 use std::{collections::HashMap, fmt::Display};
 
+use archors_verify::eip1186::{verify_proof, VerifyProofError};
 use ethers::types::{EIP1186ProofResponse, H256};
 use serde::{Deserialize, Serialize};
-
-use crate::eip1186::{verify_proof, VerifyProofError};
 
 /// Helper for caching
 #[derive(Deserialize, Serialize)]
@@ -131,8 +130,7 @@ impl BlockStateAccesses {
 impl BlockProofs {
     /// Verifies the proofs present for the block with respect to a state root.
     pub fn verify(&self, state_root: &[u8]) -> Result<(), VerifyProofError> {
-        for (account, proof) in &self.proofs {
-            println!("proof for account {account} ok");
+        for proof in self.proofs.values() {
             verify_proof(state_root, proof)?
         }
         Ok(())
