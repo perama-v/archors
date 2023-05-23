@@ -106,11 +106,12 @@ impl Verifier {
 
             let node: Vec<Vec<u8>> = rlp::decode_list(&rlp_node.0);
 
-            let verification = NodeKind::deduce(node_index, total_nodes, node.len(), &node)
+            let proof_type = NodeKind::deduce(node_index, total_nodes, node.len(), &node)
                 .map_err(|source| ProofError::NodeError { source, node_index })?
                 .traverse_node(node, &mut traversal, &mut parent_hash)
-                .map_err(|source| ProofError::NodeError { source, node_index })?
-                .get_verification_of_value(&self.data.claimed_value)?;
+                .map_err(|source| ProofError::NodeError { source, node_index })?;
+
+            let verification = proof_type.get_verification_of_value(&self.data.claimed_value)?;
 
             if let Some(verified) = verification {
                 return Ok(verified);
@@ -126,6 +127,7 @@ impl Verifier {
 /// An exclusion proof for a key does not contain information about the value
 /// of that key. The caller can make an assessment if the value for an
 /// exclusion proof is valid, depending on the context (storage or account).
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Verified {
     Inclusion,
     Exclusion,
@@ -142,10 +144,16 @@ fn node_hash_correct(rlp_node: &[u8], parent_hash: [u8; 32]) -> Result<(), Proof
     Ok(())
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProofType {
-    /// Inclusion proof with leaf bytes from the proof.
+    /// Inclusion proof with leaf RLP bytes from the proof.
     Inclusion(Vec<u8>),
-    Exclusion,
+    /// Exclusion proof consisting of a terminal branch node.
+    BranchExclusion,
+    /// Exclusion proof consisting of a terminal extension node.
+    ExtensionExclusion,
+    /// Exclusion proof consisting of a terminal leaf node.
+    LeafExclusion,
     /// Not yet finished processing the proof.
     Pending,
 }
@@ -182,7 +190,9 @@ impl ProofType {
                     }),
                 }
             }
-            ProofType::Exclusion => Ok(Some(Verified::Exclusion)),
+            ProofType::BranchExclusion
+            | ProofType::ExtensionExclusion
+            | ProofType::LeafExclusion => Ok(Some(Verified::Exclusion)),
             ProofType::Pending => Ok(None),
         }
     }
