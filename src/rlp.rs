@@ -1,13 +1,9 @@
 //! For Recursive Length Prefix encoding/decoding
 
-use ethers::types::{H256, U256};
-use rlp::Rlp;
-use rlp_derive::{RlpDecodable, RlpEncodable};
-use serde::Deserialize;
+use ethers::types::U256;
 use thiserror::Error;
 
-use crate::eip1186::{Account};
-
+use crate::eip1186::Account;
 
 #[derive(Debug, Error)]
 pub enum RlpError {
@@ -36,16 +32,17 @@ pub enum RlpError {
 /// The element comprises: rlp(nodes, rlp(storage))
 ///
 /// Where storage value is U256.
+#[allow(dead_code)]
 fn rlp_decode_final_storage_element(proof_leaf_rlp: &[u8]) -> Result<U256, RlpError> {
     let decoded: Vec<Vec<u8>> = rlp::decode_list(proof_leaf_rlp);
     let storage = decoded
         .last()
         .ok_or(RlpError::NoNodeStorageValue(hex::encode(proof_leaf_rlp)))?;
     if storage.is_empty() {
-        return Ok(U256::from(0))
+        return Ok(U256::from(0));
     }
     let val: U256 = rlp::decode(&storage)?;
-    return Ok(val)
+    return Ok(val);
 }
 
 /// Decodes the final element of an account proof and returns an account object.
@@ -54,6 +51,7 @@ fn rlp_decode_final_storage_element(proof_leaf_rlp: &[u8]) -> Result<U256, RlpEr
 ///
 /// Where account_object contains: nonce, balance, storage_hash, code_hash.
 /// Nodes at this level are discarded as they are not used to evaluate the proof.
+#[allow(dead_code)]
 pub fn rlp_decode_final_account_element(proof_leaf_rlp: &[u8]) -> Result<Account, RlpError> {
     let decoded: Vec<Vec<u8>> = rlp::decode_list(proof_leaf_rlp);
     let account_rlp = decoded
@@ -63,12 +61,15 @@ pub fn rlp_decode_final_account_element(proof_leaf_rlp: &[u8]) -> Result<Account
     Ok(account)
 }
 
+#[cfg(test)]
 mod test {
     use std::str::FromStr;
 
     use super::*;
 
     use ethers::types::H256;
+    use rlp::Rlp;
+    use rlp_derive::RlpDecodable;
 
     // A 17-item merkle patricia trie node.
     const BRANCH_NODE: &str = "f90151a0bf5e7a6355d2aae16870034397bcb78fb7f3677302857c4e3f0f11b2ad183ddaa0441a130e5b3344a0c6d4e01e69cdd8c3d54c9427c22df1c21e823bd5238bcedc80a0de4a8735f0afe745a73341f09b2641b136c4c6ceb33a4c04f868b8c0ae0c572da0616b1953ab56f21db0e3e0a8f04422bbdce75bd530e049560426deb7548c9324a0df7498a408a3cb6f416a60eb97bc61cdd31f9f9c1e3d9f2e131c476cca1a64aaa0b4b838d595815f1af27bc520f9054bbe7b8f1ae901d58ceba455a93a02b38fe3a088c2648a34b76ec09c67666bf1b2ff917c97a960dbebd2c8d56ec2b89c5f5d7ba080f002d80dc9f4e682660964f02c4f70fdfb5aeeee5f5651fca75c06f810c37980a0f6d68b8a203434af63aefd6acbce4e627b80e03c11d9c64334d48655f842ee24a02991191455c868799650d6cd4009a21443c9ac2aebedb76d55d9a01811d59a9c8080808080";

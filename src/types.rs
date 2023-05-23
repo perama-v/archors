@@ -3,7 +3,7 @@ use std::{collections::HashMap, fmt::Display};
 use ethers::types::{EIP1186ProofResponse, H256};
 use serde::{Deserialize, Serialize};
 
-use crate::{proof::ProofError, utils::hex_decode, eip1186::{verify_proof, VerifyProofError}};
+use crate::eip1186::{verify_proof, VerifyProofError};
 
 /// Helper for caching
 #[derive(Deserialize, Serialize)]

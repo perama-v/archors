@@ -1,10 +1,10 @@
 //! Verifies an EIP-1186 style proof
 
 use ethers::{
-    types::{Bytes, EIP1186ProofResponse, StorageProof, H256, U256, U64},
+    types::{EIP1186ProofResponse, StorageProof, H256, U256, U64},
     utils::keccak256,
 };
-use rlp::encode;
+
 use rlp_derive::{RlpDecodable, RlpEncodable};
 use serde::Deserialize;
 use thiserror::Error;
@@ -29,7 +29,6 @@ impl Account {
         self.eq(&empty)
     }
 }
-
 
 #[derive(Debug, Error)]
 pub enum VerifyProofError {
@@ -150,6 +149,7 @@ fn verify_account_storage_component(
     Ok(())
 }
 
+#[cfg(test)]
 mod test {
     use crate::utils::hex_decode;
 

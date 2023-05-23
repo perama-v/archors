@@ -3,7 +3,6 @@ use std::{
     io::{self, Read},
 };
 
-use ethers::{types::{U256, H256}, utils::keccak256};
 use hex::FromHexError;
 use thiserror::Error;
 
