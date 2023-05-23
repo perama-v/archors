@@ -65,7 +65,7 @@ pub struct NibblePath {
 impl NibblePath {
     /// Turn a byte array into a nibble array.
     pub fn init(path_bytes: &[u8]) -> Self {
-        let path = path_bytes.into_iter().flat_map(byte_to_nibbles).collect();
+        let path = path_bytes.iter().flat_map(byte_to_nibbles).collect();
         Self {
             path,
             visiting_index: 0,
@@ -102,7 +102,7 @@ impl NibblePath {
         let node_index = self
             .path
             .get(self.visiting_index)
-            .ok_or_else(|| PathError::NextNodeNotInPath)?;
+            .ok_or(PathError::NextNodeNotInPath)?;
         self.visiting_index += 1;
         Ok(*node_index)
     }
@@ -114,7 +114,7 @@ impl NibblePath {
             let expected = self
                 .path
                 .get(self.visiting_index)
-                .ok_or_else(|| PathError::ExtensionPathLongerThanExpected)?;
+                .ok_or(PathError::ExtensionPathLongerThanExpected)?;
             if expected != &skip_nibble {
                 return Err(PathError::ExtensionNibbleMismatch {
                     visiting: self.visiting_index,
@@ -140,7 +140,7 @@ impl NibblePath {
                 .path
                 .get(temp_index)
                 // Extension is longer than path remaining.
-                .ok_or_else(|| PathError::ExtensionPathLongerThanExpected)?;
+                .ok_or(PathError::ExtensionPathLongerThanExpected)?;
 
             if expected != skip_nibble {
                 // Extension diverges from the expected path for this key.
@@ -158,7 +158,7 @@ impl NibblePath {
             // A full path (32 bytes, 64 nibbles) must have been checked
             return Ok(PathNature::FullPathMatches);
         }
-        return Ok(PathNature::SubPathMatches);
+        Ok(PathNature::SubPathMatches)
     }
 }
 
@@ -192,7 +192,7 @@ pub enum PathNature {
 fn prefixed_bytes_to_nibbles(bytes: &[u8]) -> Result<Vec<u8>, PathError> {
     let mut nibbles = vec![];
 
-    let first_byte = bytes.get(0).ok_or_else(|| PathError::ExtensionPathEmpty)?;
+    let first_byte = bytes.first().ok_or(PathError::ExtensionPathEmpty)?;
     match PrefixEncoding::try_from(first_byte)? {
         PrefixEncoding::ExtensionEven | PrefixEncoding::LeafEven => {
             // Do nothing. Whole first byte is encoding/padding.
@@ -225,12 +225,12 @@ impl TryFrom<&u8> for PrefixEncoding {
     type Error = PathError;
 
     fn try_from(value: &u8) -> Result<Self, Self::Error> {
-        let nibbles = byte_to_nibbles(&value);
+        let nibbles = byte_to_nibbles(value);
         let encoding = match nibbles {
             [0, _] => PrefixEncoding::ExtensionEven,
-            [1, nibble @ _] => PrefixEncoding::ExtensionOdd(nibble),
+            [1, nibble] => PrefixEncoding::ExtensionOdd(nibble),
             [2, _] => PrefixEncoding::LeafEven,
-            [3, nibble @ _] => PrefixEncoding::LeafOdd(nibble),
+            [3, nibble] => PrefixEncoding::LeafOdd(nibble),
             [_, _] => return Err(PathError::InvalidPathPrefix),
         };
         Ok(encoding)
@@ -241,7 +241,7 @@ impl TryFrom<&[u8]> for PrefixEncoding {
     type Error = PathError;
 
     fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
-        let first_byte = value.first().ok_or_else(|| PathError::PathEmpty)?;
+        let first_byte = value.first().ok_or(PathError::PathEmpty)?;
         first_byte.try_into()
     }
 }
@@ -312,7 +312,7 @@ mod test {
         traversal
             .append_prefixed_sequence(&hex::decode(extension).unwrap())
             .unwrap();
-        expected_total.extend_from_slice(&expected_nibbles);
+        expected_total.extend_from_slice(expected_nibbles);
         assert_eq!(
             traversal.path, expected_total,
             "Failed to add {extension} extension"

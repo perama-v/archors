@@ -133,7 +133,7 @@ impl BlockProofs {
     pub fn verify(&self, state_root: &[u8]) -> Result<(), VerifyProofError> {
         for (account, proof) in &self.proofs {
             println!("proof for account {account} ok");
-            verify_proof(&state_root, proof)?
+            verify_proof(state_root, proof)?
         }
         Ok(())
     }

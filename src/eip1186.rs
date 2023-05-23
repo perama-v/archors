@@ -76,7 +76,7 @@ pub fn verify_proof(
     proof: &EIP1186ProofResponse,
 ) -> Result<(), VerifyProofError> {
     // Account
-    verify_account_component(block_state_root, &proof).map_err(|source| {
+    verify_account_component(block_state_root, proof).map_err(|source| {
         VerifyProofError::AccountError {
             source,
             account: hex_encode(proof.address),
@@ -135,7 +135,7 @@ fn verify_account_storage_component(
     let storage_proof = Verifier::new_single_proof(
         storage_proof.proof,
         *storage_hash,
-        keccak256(&storage_proof.key),
+        keccak256(storage_proof.key),
         rlp::encode(&claimed_value).to_vec(),
     );
 

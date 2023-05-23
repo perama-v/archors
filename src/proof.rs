@@ -175,17 +175,15 @@ impl ProofType {
         match self {
             ProofType::Inclusion(proof_leaf_rlp_bytes) => {
                 match claimed_rlp_value == proof_leaf_rlp_bytes {
-                    true => return Ok(Some(Verified::Inclusion)),
-                    false => {
-                        return Err(ProofError::IncorrectLeafValue {
-                            claimed: hex_encode(claimed_rlp_value),
-                            expected: hex_encode(proof_leaf_rlp_bytes),
-                        })
-                    }
+                    true => Ok(Some(Verified::Inclusion)),
+                    false => Err(ProofError::IncorrectLeafValue {
+                        claimed: hex_encode(claimed_rlp_value),
+                        expected: hex_encode(proof_leaf_rlp_bytes),
+                    }),
                 }
             }
-            ProofType::Exclusion => return Ok(Some(Verified::Exclusion)),
-            ProofType::Pending => return Ok(None),
+            ProofType::Exclusion => Ok(Some(Verified::Exclusion)),
+            ProofType::Pending => Ok(None),
         }
     }
 }
@@ -230,7 +228,6 @@ impl From<[u8; 32]> for Item {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use std::{fs::File, io::BufReader};
@@ -248,7 +245,6 @@ mod tests {
         let reader = BufReader::new(&file);
         serde_json::from_reader(reader).expect("could not parse proof")
     }
-
 
     /// Checks that the merkle proof consists of hashes linking every level to the one above.
     ///
@@ -308,7 +304,7 @@ mod tests {
     fn keccak() {
         let hex_input = "";
         let bytes = hex::decode(hex_input).unwrap();
-        let hash = hex::encode(keccak256(&bytes));
+        let hash = hex::encode(keccak256(bytes));
         assert_eq!(
             hash,
             "c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"
@@ -316,7 +312,7 @@ mod tests {
 
         let hex_input = "00";
         let bytes = hex::decode(hex_input).unwrap();
-        let hash = hex::encode(keccak256(&bytes));
+        let hash = hex::encode(keccak256(bytes));
         assert_eq!(
             hash,
             "bc36789e7a1e281436464229828f817d6612f7b477d66591ff96a9e064bcc98a"
@@ -324,7 +320,7 @@ mod tests {
 
         let hex_input = "01";
         let bytes = hex::decode(hex_input).unwrap();
-        let hash = hex::encode(keccak256(&bytes));
+        let hash = hex::encode(keccak256(bytes));
         assert_eq!(
             hash,
             "5fe7f977e71dba2ea1a68e21057beebb9be2ac30c6410aa38d4f3fbe41dcffd2"

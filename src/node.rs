@@ -80,7 +80,7 @@ impl NodeKind {
             (true, 2) => {
                 let path: &[u8] = node
                     .get(0)
-                    .ok_or_else(|| NodeError::TerminalExtensionOrLeafHasNoPath)?;
+                    .ok_or(NodeError::TerminalExtensionOrLeafHasNoPath)?;
                 let encoding = PrefixEncoding::try_from(path)?;
                 match encoding {
                     PrefixEncoding::ExtensionEven | PrefixEncoding::ExtensionOdd(_) => {
@@ -92,7 +92,7 @@ impl NodeKind {
             (false, 2) => NodeKind::Extension,
             (true, 17) => NodeKind::TerminalBranch,
             (false, 17) => NodeKind::Branch,
-            (_, count @ _) => return Err(NodeError::InvalidNodeItemCount(count)),
+            (_, count) => return Err(NodeError::InvalidNodeItemCount(count)),
         };
         Ok(kind)
     }
@@ -112,9 +112,7 @@ impl NodeKind {
         match self {
             NodeKind::Branch => {
                 // Assert value item is empty (not terminal).
-                let final_item = node
-                    .get(16)
-                    .ok_or_else(|| NodeError::BranchNodeHasNoValue)?;
+                let final_item = node.get(16).ok_or(NodeError::BranchNodeHasNoValue)?;
 
                 if !final_item.is_empty() {
                     return Err(NodeError::BranchNodeHasValue);
@@ -126,11 +124,11 @@ impl NodeKind {
 
                 let item = node
                     .get(path_nibble as usize)
-                    .ok_or_else(|| NodeError::NoNodeToTraverse)?;
+                    .ok_or(NodeError::NoNodeToTraverse)?;
                 if item.len() != 32 {
                     return Err(NodeError::BranchNodeItemInvalidLength);
                 }
-                let next_root: [u8; 32] = H256::from_slice(&item).into();
+                let next_root: [u8; 32] = H256::from_slice(item).into();
                 *parent_root_to_update = next_root;
                 Ok(ProofType::Pending)
             }
@@ -147,11 +145,11 @@ impl NodeKind {
                 traversal.skip_extension_node_nibbles(extension)?;
 
                 // Send back a new parent node
-                let item = node.get(1).ok_or_else(|| NodeError::NoNodeToTraverse)?;
+                let item = node.get(1).ok_or(NodeError::NoNodeToTraverse)?;
                 if item.len() != 32 {
                     return Err(NodeError::ExtensionNextNodeInvalidLength);
                 }
-                let next_root: [u8; 32] = H256::from_slice(&item).into();
+                let next_root: [u8; 32] = H256::from_slice(item).into();
                 *parent_root_to_update = next_root;
                 Ok(ProofType::Pending)
             }
@@ -159,22 +157,20 @@ impl NodeKind {
                 // An exclusion proof
                 let value = node
                     .get(16)
-                    .ok_or_else(|| NodeError::TerminalBranchNodeHasNoValue)?;
+                    .ok_or(NodeError::TerminalBranchNodeHasNoValue)?;
                 // Trie only contains other data for paths that diverge from this path.
                 if value.is_empty() {
                     return Ok(ProofType::Exclusion);
                 }
                 // If there were an inclusion proof, it would have a leaf after this
                 // branch node, but this is the terminal node in the proof.
-                return Err(NodeError::TerminalBranchNodeHasValue);
+                Err(NodeError::TerminalBranchNodeHasValue)
             }
             NodeKind::TerminalExtension => {
-                let extension = node
-                    .get(0)
-                    .ok_or_else(|| NodeError::TerminalExtensionHasNoPath)?;
+                let extension = node.get(0).ok_or(NodeError::TerminalExtensionHasNoPath)?;
                 let next_node = node
                     .get(1)
-                    .ok_or_else(|| NodeError::TerminalExtensionHasNoNextNode)?;
+                    .ok_or(NodeError::TerminalExtensionHasNoNextNode)?;
                 match traversal.match_or_mismatch(extension)? {
                     PathNature::SubPathMatches => {
                         // exclusion proof. key shares some path with this node but diverges later so this is the latest relevant node
@@ -192,22 +188,22 @@ impl NodeKind {
                         Ok(ProofType::Exclusion)
                     }
                     PathNature::FullPathMatches | PathNature::FullPathDiverges => {
-                        return Err(NodeError::TerminalExtensionHasFullPath)
+                        Err(NodeError::TerminalExtensionHasFullPath)
                     }
                 }
             }
             NodeKind::Leaf => {
-                let first_item = node.get(0).ok_or_else(|| NodeError::LeafHasNoPath)?;
-                let second_item = node.get(1).ok_or_else(|| NodeError::LeafHasNoValue)?;
-                match traversal.match_or_mismatch(first_item)? {
+                let path = node.get(0).ok_or(NodeError::LeafHasNoPath)?;
+                let value = node.get(1).ok_or(NodeError::LeafHasNoValue)?;
+                match traversal.match_or_mismatch(path)? {
                     PathNature::SubPathMatches | PathNature::SubPathDiverges => {
                         Err(NodeError::LeafHasIncompletePath)
                     }
                     PathNature::FullPathMatches => {
-                        if second_item.is_empty() {
-                            todo!("an inclusion proof cannot have empty leaf value")
+                        if value.is_empty() {
+                            todo!("an inclusion proof cannot have empty leaf value");
                         }
-                        Ok(ProofType::Inclusion(second_item.to_vec()))
+                        Ok(ProofType::Inclusion(value.to_vec()))
                     }
                     PathNature::FullPathDiverges => {
                         // The node is a leaf, but not the leaf that matches the key.

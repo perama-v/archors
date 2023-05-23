@@ -41,8 +41,8 @@ fn rlp_decode_final_storage_element(proof_leaf_rlp: &[u8]) -> Result<U256, RlpEr
     if storage.is_empty() {
         return Ok(U256::from(0));
     }
-    let val: U256 = rlp::decode(&storage)?;
-    return Ok(val);
+    let val: U256 = rlp::decode(storage)?;
+    Ok(val)
 }
 
 /// Decodes the final element of an account proof and returns an account object.
