@@ -1,0 +1,10 @@
+[package]
+name = "archors_tracer"
+version = "0.1.0"
+edition = "2021"
+description = "Tool for tracing an Ethereum block using state from EIP-1186 proofs"
+
+[dependencies]
+ethers = "2.0.4"
+serde = {  version = "1.0.152", features = ["derive"] }
+serde_json = "1.0.94"

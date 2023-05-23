@@ -1,0 +1,7 @@
+[package]
+name = "archors_inventory"
+version = "0.1.0"
+edition = "2021"
+description = "A tool for discovering which state was accessed for an Ethereum block"
+
+[dependencies]
