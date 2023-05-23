@@ -55,7 +55,9 @@ pub enum AccountError {
     #[error("Proof is empty")]
     EmptyProof,
     #[error("A valid exclusion proof exists, but the claimed account is not empty")]
-    ClaimedAccountNotEmpty,
+    ExclusionProofForNonEmptyAccount,
+    #[error("Unexpected inclusion proof for an empty account, expected exclusion proof")]
+    InclusionProofForEmptyAccount,
 }
 
 #[derive(Debug, Error)]
@@ -63,7 +65,9 @@ pub enum StorageError {
     #[error("ProofError {0}")]
     ProofError(#[from] ProofError),
     #[error("A valid exclusion proof exists, but the claimed storage is not empty")]
-    ClaimedStorageNotEmpty,
+    ExclusionProofForNonZeroValue,
+    #[error("Unexpected inclusion proof for a storage value of zero, expected exclusion proof")]
+    InclusionProofForZeroValue,
 }
 
 /// Verifies a single account proof with respect to a state roof. The
@@ -104,18 +108,22 @@ pub fn verify_account_component(
         code_hash: proof.code_hash,
     };
 
-    let account_proof = Verifier::new_single_proof(
+    let account_prover = Verifier::new_single_proof(
         proof.account_proof.clone(),
         H256::from_slice(block_state_root).0,
         keccak256(proof.address.as_bytes()),
         rlp::encode(&claimed_account).to_vec(),
     );
 
-    match account_proof.verify()? {
-        Verified::Inclusion => {}
+    match account_prover.verify()? {
+        Verified::Inclusion => {
+            if claimed_account == Account::default() {
+                return Err(AccountError::InclusionProofForEmptyAccount);
+            }
+        }
         Verified::Exclusion => match claimed_account.is_empty() {
             true => {}
-            false => return Err(AccountError::ClaimedAccountNotEmpty),
+            false => return Err(AccountError::ExclusionProofForNonEmptyAccount),
         },
     }
     Ok(())
@@ -129,18 +137,22 @@ fn verify_account_storage_component(
     // let claimed_storage = Storage(storage_proof.value);
     let claimed_value = storage_proof.value;
 
-    let storage_proof = Verifier::new_single_proof(
+    let storage_prover = Verifier::new_single_proof(
         storage_proof.proof,
         *storage_hash,
         keccak256(storage_proof.key),
         rlp::encode(&claimed_value).to_vec(),
     );
 
-    match storage_proof.verify()? {
-        Verified::Inclusion => {}
+    match storage_prover.verify()? {
+        Verified::Inclusion => {
+            if claimed_value == U256::from(0) {
+                return Err(StorageError::InclusionProofForZeroValue);
+            }
+        }
         Verified::Exclusion => match claimed_value.is_zero() {
             true => {}
-            false => return Err(StorageError::ClaimedStorageNotEmpty),
+            false => return Err(StorageError::ExclusionProofForNonZeroValue),
         },
     }
     Ok(())
