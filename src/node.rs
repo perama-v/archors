@@ -157,34 +157,35 @@ impl NodeKind {
             }
             NodeKind::TerminalBranch => {
                 // An exclusion proof
-
-                // Assert value item is Some(empty_list) (terminal).
                 let value = node
                     .get(16)
                     .ok_or_else(|| NodeError::TerminalBranchNodeHasNoValue)?;
+                // Trie only contains other data for paths that diverge from this path.
                 if value.is_empty() {
                     return Ok(ProofType::Exclusion);
                 }
+                // If there were an inclusion proof, it would have a leaf after this
+                // branch node, but this is the terminal node in the proof.
                 return Err(NodeError::TerminalBranchNodeHasValue);
             }
             NodeKind::TerminalExtension => {
-                let first_item = node
+                let extension = node
                     .get(0)
                     .ok_or_else(|| NodeError::TerminalExtensionHasNoPath)?;
-                let second_item = node
+                let next_node = node
                     .get(1)
                     .ok_or_else(|| NodeError::TerminalExtensionHasNoNextNode)?;
-                match traversal.match_or_mismatch(first_item)? {
+                match traversal.match_or_mismatch(extension)? {
                     PathNature::SubPathMatches => {
                         // exclusion proof. key shares some path with this node but diverges later so this is the latest relevant node
-                        if second_item.is_empty() {
+                        if next_node.is_empty() {
                             todo!("Even in an exclusion proof, shouldn't there be a next node?")
                             // return Err(NodeError::ExclusionProofNodeHasNoNextNode);
                         }
                         Ok(ProofType::Exclusion)
                     }
                     PathNature::SubPathDiverges => {
-                        if second_item.is_empty() {
+                        if next_node.is_empty() {
                             todo!("Even in an exclusion proof, shouldn't there be a next node?")
                             // return Err(NodeError::ExclusionProofNodeHasNoNextNode);
                         }
@@ -209,7 +210,11 @@ impl NodeKind {
                         Ok(ProofType::Inclusion(second_item.to_vec()))
                     }
                     PathNature::FullPathDiverges => {
-                        todo!("Err, this is an inclusion proof for different key")
+                        // The node is a leaf, but not the leaf that matches the key.
+                        // This means the trie cannot contain the key, otherwise this
+                        // node would be a branch or extension. Hence it is an exclusion
+                        // proof.
+                        Ok(ProofType::Exclusion)
                     }
                 }
             }
@@ -217,8 +222,9 @@ impl NodeKind {
     }
 }
 
+#[cfg(test)]
 mod test {
-    use crate::utils::{hex_decode, hex_encode};
+    use crate::utils::hex_decode;
 
     use super::*;
 
@@ -302,5 +308,36 @@ mod test {
     #[test]
     fn test_exclusion_extension_for_zero_key() {
         todo!()
+    }
+    /// Storage proof, data from block 17190873.
+    /// - account 0x31c8eacbffdd875c74b94b077895bd78cf1e64a3
+    /// - Storage key: 0xfdf207d061b788649c2be9e4947993c2dbda042b15d4b3787a83f8c953f184ad
+    /// - path (keccak(key)): 0x471575b583caee1d6f3b74e138773e8c0c9f6eed2de061ddd7e6002245c15102
+    ///
+    /// four nodes:
+    /// - 4 branches, follow items 0x- 4, 7, 1, 5
+    /// - leaf node with items:
+    ///     - 0: even leaf with path b489b5172060021855f062689a1668509fb781aaf0baad0a7c3a6f413f36
+    ///         - Completely different path (next nibble should be 0x7)
+    ///     - 1: value 0x880de0b6b3a7640000
+    ///         - Completely different value (claimed value accompanying proof is 0x0)
+    #[test]
+    fn test_exclusion_leaf_for_nonzero_key() {
+        let node = rlp_decode_node("0xea9f20b489b5172060021855f062689a1668509fb781aaf0baad0a7c3a6f413f3689880de0b6b3a7640000");
+        let node_kind = NodeKind::deduce(4, 5, 2, &node).unwrap();
+        assert_eq!(node_kind, NodeKind::Leaf);
+
+        let mut traversal = NibblePath::init(
+            &hex_decode("0x471575b583caee1d6f3b74e138773e8c0c9f6eed2de061ddd7e6002245c15102")
+                .unwrap(),
+        );
+        assert_eq!(traversal.visit_path_nibble().unwrap(), 0x4);
+        assert_eq!(traversal.visit_path_nibble().unwrap(), 0x7);
+        assert_eq!(traversal.visit_path_nibble().unwrap(), 0x1);
+        assert_eq!(traversal.visit_path_nibble().unwrap(), 0x5);
+        let mut parent_root_to_update = [0u8; 32];
+        node_kind
+            .traverse_node(node, &mut traversal, &mut parent_root_to_update)
+            .unwrap();
     }
 }
