@@ -1,10 +1,8 @@
-//! For verifying a generic proof kind.
-use ethers::{
-    types::{Bytes, U256},
-    utils::keccak256,
-};
+//! For verifying a Merkle Patricita Proof for arbitrary proof values.
+//! E.g., Account, storage ...
+use ethers::{types::Bytes, utils::keccak256};
 use hex::FromHexError;
-use rlp::{self, Rlp};
+use rlp;
 use rlp_derive::{RlpDecodable, RlpEncodable};
 use serde::Deserialize;
 use thiserror::Error;
@@ -232,42 +230,12 @@ impl From<[u8; 32]> for Item {
     }
 }
 
-/// Checks that the merkle proof consists of hashes linking every level to the one above.
-///
-/// A proof consists of a list of RLP-encoded data: (A, B, ... C)
-/// - A (Top of trie / near root). `hash(A) == trie_root`
-/// - B (Lower in trie), `hash(B)` will be present in A.
-/// - ...
-/// - C (Bottom of trie / near branches), `hash(C)` will be present in B
-///     - `hash(storage_value)` will be present in C.
-fn verify_parents_contain_children(nodes: &[Bytes]) -> Result<(), ProofError> {
-    let lowest = nodes.last().ok_or(ProofError::EmptyProof)?;
-    let mut hash_to_check: [u8; 32] = keccak256(&lowest.0);
-    // Walk from leaves to root.
-    for node_bytes in nodes.iter().rev().skip(1) {
-        let node: Vec<Vec<u8>> = rlp::decode_list(&node_bytes.0);
-        if node.len() > 17 {
-            return Err(ProofError::InvalidNodeItemCount(node.len()));
-        }
-        if !node.contains(&hash_to_check.into()) {
-            return {
-                let child = hex::encode(hash_to_check);
-                let parent = hex::encode(&node_bytes.0);
-                Err(ProofError::ChildNotFound { child, parent })
-            };
-        }
-        // Remember the hash of the current node RLP for the next level up.
-        hash_to_check = keccak256(&node_bytes.0)
-    }
-    Ok(())
-}
 
 #[cfg(test)]
 mod tests {
-    use std::{fs::File, io::BufReader, str::FromStr};
+    use std::{fs::File, io::BufReader};
 
     use ethers::types::{EIP1186ProofResponse, H256};
-    use rlp::Rlp;
 
     use super::*;
 
@@ -279,6 +247,37 @@ mod tests {
         let file = File::open("data/test_proof_2.json").expect("no proof found");
         let reader = BufReader::new(&file);
         serde_json::from_reader(reader).expect("could not parse proof")
+    }
+
+
+    /// Checks that the merkle proof consists of hashes linking every level to the one above.
+    ///
+    /// A proof consists of a list of RLP-encoded data: (A, B, ... C)
+    /// - A (Top of trie / near root). `hash(A) == trie_root`
+    /// - B (Lower in trie), `hash(B)` will be present in A.
+    /// - ...
+    /// - C (Bottom of trie / near branches), `hash(C)` will be present in B
+    ///     - `hash(storage_value)` will be present in C.
+    fn verify_parents_contain_children(nodes: &[Bytes]) -> Result<(), ProofError> {
+        let lowest = nodes.last().ok_or(ProofError::EmptyProof)?;
+        let mut hash_to_check: [u8; 32] = keccak256(&lowest.0);
+        // Walk from leaves to root.
+        for node_bytes in nodes.iter().rev().skip(1) {
+            let node: Vec<Vec<u8>> = rlp::decode_list(&node_bytes.0);
+            if node.len() > 17 {
+                return Err(ProofError::InvalidNodeItemCount(node.len()));
+            }
+            if !node.contains(&hash_to_check.into()) {
+                return {
+                    let child = hex::encode(hash_to_check);
+                    let parent = hex::encode(&node_bytes.0);
+                    Err(ProofError::ChildNotFound { child, parent })
+                };
+            }
+            // Remember the hash of the current node RLP for the next level up.
+            hash_to_check = keccak256(&node_bytes.0)
+        }
+        Ok(())
     }
 
     #[test]
