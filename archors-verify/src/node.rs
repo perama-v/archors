@@ -160,7 +160,7 @@ impl NodeKind {
                     .ok_or(NodeError::TerminalBranchNodeHasNoValue)?;
                 // Trie only contains other data for paths that diverge from this path.
                 if value.is_empty() {
-                    return Ok(ProofType::Exclusion);
+                    return Ok(ProofType::BranchExclusion);
                 }
                 // If there were an inclusion proof, it would have a leaf after this
                 // branch node, but this is the terminal node in the proof.
@@ -178,14 +178,15 @@ impl NodeKind {
                             todo!("Even in an exclusion proof, shouldn't there be a next node?")
                             // return Err(NodeError::ExclusionProofNodeHasNoNextNode);
                         }
-                        Ok(ProofType::Exclusion)
+                        Ok(ProofType::ExtensionExclusion)
                     }
                     PathNature::SubPathDiverges => {
                         if next_node.is_empty() {
                             todo!("Even in an exclusion proof, shouldn't there be a next node?")
                             // return Err(NodeError::ExclusionProofNodeHasNoNextNode);
                         }
-                        Ok(ProofType::Exclusion)
+
+                        Ok(ProofType::ExtensionExclusion)
                     }
                     PathNature::FullPathMatches | PathNature::FullPathDiverges => {
                         Err(NodeError::TerminalExtensionHasFullPath)
@@ -210,7 +211,7 @@ impl NodeKind {
                         // This means the trie cannot contain the key, otherwise this
                         // node would be a branch or extension. Hence it is an exclusion
                         // proof.
-                        Ok(ProofType::Exclusion)
+                        Ok(ProofType::LeafExclusion)
                     }
                 }
             }
@@ -220,6 +221,8 @@ impl NodeKind {
 
 #[cfg(test)]
 mod test {
+    use ethers::types::U256;
+
     use crate::utils::hex_decode;
 
     use super::*;
@@ -253,14 +256,17 @@ mod test {
             .traverse_node(node, &mut traversal, &mut parent_root_to_update)
             .unwrap();
     }
+
+    // Not possible, when a slot value is set to zero, the key is removed.
+    // Hence the proof will be an exclusion proof.
     #[test]
-    fn test_inclusion_leaf_for_zero_value() {
-        todo!()
-    }
-    /// Storage proof, data from block 17190873.
+    fn test_placeholder_inclusion_leaf_for_zero_value() {}
+
+    /// Storage proof, data from block 17190873 (./data/blocks/17190873/block_state_proofs.json).
     /// - account 0x0b09dea16768f0799065c475be02919503cb2a35
-    /// - Storage key: 0x495035048c903d5331ae820b52f7c4dc5ce81ee403640178e77c00a916ba54ab
+    /// - storage key: 0x495035048c903d5331ae820b52f7c4dc5ce81ee403640178e77c00a916ba54ab
     /// - path (keccak(key)): 0xcf1652a03292400cdc9040b230c7c8b9584f9903c1f4e2809fca09daa8670c8f
+    /// - value: 0x4996c0f7e6d68f87940591181285a446222c413f8800d35d36f298b64544dd7
     ///
     /// four nodes:
     /// - branch, follow item 0xc
@@ -281,31 +287,143 @@ mod test {
         assert_eq!(traversal.visit_path_nibble().unwrap(), 0xf);
         assert_eq!(traversal.visit_path_nibble().unwrap(), 0x1);
         let mut parent_root_to_update = [0u8; 32];
-        node_kind
+        let leaf_rlp_bytes = node.last().unwrap().clone();
+        let leaf_value: U256 = rlp::decode(&leaf_rlp_bytes).unwrap();
+        let expected_leaf = U256::from_big_endian(
+            &hex_decode("0x04996c0f7e6d68f87940591181285a446222c413f8800d35d36f298b64544dd7")
+                .unwrap(),
+        );
+        assert_eq!(leaf_value, expected_leaf);
+        let proof_type = node_kind
             .traverse_node(node, &mut traversal, &mut parent_root_to_update)
             .unwrap();
+        assert_eq!(proof_type, ProofType::Inclusion(leaf_rlp_bytes));
     }
+
+    /// Storage proof, data from block 17190873 (./data/blocks/17190873/block_state_proofs.json).
+    /// - account 0xd1d1d4e36117ab794ec5d4c78cbd3a8904e691d0
+    /// - Storage key: 0x0000000000000000000000000000000000000000000000000000000000000000
+    /// - path (keccak(key)): 0x290decd9548b62a8d60345a988386fc84ba6bc95484008f6362f93160ef3e563
+    ///
+    /// three nodes:
+    /// - branch, follow item 0x2
+    /// - branch, follow item 0x9
+    /// - leaf node
     #[test]
     fn test_inclusion_leaf_for_zero_key() {
-        todo!()
+        let node = rlp_decode_node("0xf7a0200decd9548b62a8d60345a988386fc84ba6bc95484008f6362f93160ef3e5639594d9db270c1b5e3bd161e8c8503c55ceabee709552");
+        let node_kind = NodeKind::deduce(2, 3, 2, &node).unwrap();
+        assert_eq!(node_kind, NodeKind::Leaf);
+
+        let mut traversal = NibblePath::init(
+            &hex_decode("0x290decd9548b62a8d60345a988386fc84ba6bc95484008f6362f93160ef3e563")
+                .unwrap(),
+        );
+        assert_eq!(traversal.visit_path_nibble().unwrap(), 0x2);
+        assert_eq!(traversal.visit_path_nibble().unwrap(), 0x9);
+        let mut parent_root_to_update = [0u8; 32];
+        let leaf_rlp_bytes = node.last().unwrap().clone();
+        let leaf_value: U256 = rlp::decode(&leaf_rlp_bytes).unwrap();
+        let expected_leaf = U256::from_big_endian(
+            &hex_decode("0xd9db270c1b5e3bd161e8c8503c55ceabee709552").unwrap(),
+        );
+        assert_eq!(leaf_value, expected_leaf);
+        let proof_type = node_kind
+            .traverse_node(node, &mut traversal, &mut parent_root_to_update)
+            .unwrap();
+        assert_eq!(proof_type, ProofType::Inclusion(leaf_rlp_bytes));
     }
+
+    /// Storage proof, data from block 17190873 (./data/blocks/17190873/block_state_proofs.json).
+    /// - account 0x2d7c6b69175c2939173f2fd470538835336df92b
+    /// - Storage key: 0xbbca5b315e4cd362c7283dfcb09024ec2929d27b75662a398e5013a2368ad895
+    /// - path (keccak(key)): 0x3cb0e7d0c9bc2b22094c3207040a4579513a0ed633e3019949f14610d67e15f5
+    ///
+    /// four nodes:
+    /// - 1 branch, follow item 0x3
+    /// - 1 terminal branch, hence exclusion proof.
     #[test]
     fn test_exclusion_branch_for_nonzero_key() {
-        todo!()
+        let node = rlp_decode_node("0xf891a097d37274c14dc79a9874f3387ef34e7dbfbbed0fb3caf668d57323f7fb152f79808080808080a0e05bb037e849d9733f2b57d5132f96c57eb2eca763a5ebbb53f52f88c4cd7abb8080808080a0f9dd0c1cfce2ce11694839a45f4beb3d5ac9af39ddd9949075c6be1223373a0ca0c7219989da6535f0fbaf34d9633adde100c81c6f3efd0b9a423fa4886245fa8c8080");
+        let node_kind = NodeKind::deduce(1, 2, 17, &node).unwrap();
+        assert_eq!(node_kind, NodeKind::TerminalBranch);
+
+        let mut traversal = NibblePath::init(
+            &hex_decode("0x3cb0e7d0c9bc2b22094c3207040a4579513a0ed633e3019949f14610d67e15f5")
+                .unwrap(),
+        );
+        assert_eq!(traversal.visit_path_nibble().unwrap(), 0x3);
+        let mut parent_root_to_update = [0u8; 32];
+        assert_eq!(
+            node_kind
+                .traverse_node(node, &mut traversal, &mut parent_root_to_update)
+                .unwrap(),
+            ProofType::BranchExclusion
+        );
     }
+
+    /// Storage proof, data from block 17190873 (./data/blocks/17190873/block_state_proofs.json).
+    /// - account: 0x479d94c2957ffc16cb710fd2f5adbbde999e46bd
+    /// - Storage key: 0x0000000000000000000000000000000000000000000000000000000000000000
+    /// - path (keccak(key)): 0x290decd9548b62a8d60345a988386fc84ba6bc95484008f6362f93160ef3e563
+    /// - value: 0x0
+    ///
+    /// four nodes:
+    /// - 1 branch, follow item 0x2
+    /// - 1 terminal branch, hence exclusion proof.
     #[test]
     fn test_exclusion_branch_for_zero_key() {
-        todo!()
+        let node = rlp_decode_node("0xf901118080808080a00b1cd5a23994bc2aea49ae88d628bdfe9b4efb2b87a823094a83ed0e0fa013bc80a01b220b26c51916acd02c2e8492d76003c4f2d74b5575714846605cbe357155d68080a0162982546a8dcdc8b71661334851a2079867db4ac1bb2ec791921f8d16fa0a99a00113760f61a3340446e68233b923cc182d5584458f94217d68dde49e2d139dcaa0807b72d3c3a055ecb79ccf06c3234e6c17160bc96434dc5db4e8e1407c73e1aaa0340143d8c4052b29a57a409dcfce54ee187249048d5187a8ed8d79fb89cccce1a09809d25b91a2d1af6ff54188188bc056f9cf37ff28ed3d48ddd3fcc2c13a90d2a0dbba79570a67cf63a829507cf3cb03ead958cb4df306c12807001387b29e227c80");
+        let node_kind = NodeKind::deduce(1, 2, 17, &node).unwrap();
+        assert_eq!(node_kind, NodeKind::TerminalBranch);
+
+        let mut traversal = NibblePath::init(
+            &hex_decode("0x290decd9548b62a8d60345a988386fc84ba6bc95484008f6362f93160ef3e563")
+                .unwrap(),
+        );
+        assert_eq!(traversal.visit_path_nibble().unwrap(), 0x2);
+        let mut parent_root_to_update = [0u8; 32];
+        assert_eq!(
+            node_kind
+                .traverse_node(node, &mut traversal, &mut parent_root_to_update)
+                .unwrap(),
+            ProofType::BranchExclusion
+        );
     }
+    /// Storage proof, data from block 17190873 (./data/blocks/17190873/block_state_proofs.json).
+    /// - account: 0x8025d6c18807c4ff46f316c1942462b907119c7e
+    /// - Storage key: 0x69b38bc029784d7648153a84fe06a4d9b6af2633f64c92edf3acad38a490e394
+    /// - path (keccak(key)): 0x1d3fa00abc7274427888892f57a97452e67990a28f3235a5e1b84087ca40feca
+    /// - value: 0x0
+    ///
+    /// 3 nodes:
+    /// - 1 branch node, follow item: 0x1
+    /// - 1 branch node, follow item: 0xd
+    /// - 1 terminal extension node, hence exclusion proof.
     #[test]
     fn test_exclusion_extension_for_nonzero_key() {
-        todo!()
+        let node = rlp_decode_node(
+            "0xe210a0c01ed7b75d88d88add6ef9744c598fff626eac250bc209e6b4d11069e93aefb8",
+        );
+        let node_kind = NodeKind::deduce(2, 3, 2, &node).unwrap();
+        assert_eq!(node_kind, NodeKind::TerminalExtension);
+
+        let mut traversal = NibblePath::init(
+            &hex_decode("0x1d3fa00abc7274427888892f57a97452e67990a28f3235a5e1b84087ca40feca")
+                .unwrap(),
+        );
+        assert_eq!(traversal.visit_path_nibble().unwrap(), 0x1);
+        assert_eq!(traversal.visit_path_nibble().unwrap(), 0xd);
+        let mut parent_root_to_update = [0u8; 32];
+        assert_eq!(
+            node_kind
+                .traverse_node(node, &mut traversal, &mut parent_root_to_update)
+                .unwrap(),
+            ProofType::ExtensionExclusion
+        );
     }
-    #[test]
-    fn test_exclusion_extension_for_zero_key() {
-        todo!()
-    }
-    /// Storage proof, data from block 17190873.
+
+    /// Storage proof, data from block 17190873 (./data/blocks/17190873/block_state_proofs.json).
     /// - account 0x31c8eacbffdd875c74b94b077895bd78cf1e64a3
     /// - Storage key: 0xfdf207d061b788649c2be9e4947993c2dbda042b15d4b3787a83f8c953f184ad
     /// - path (keccak(key)): 0x471575b583caee1d6f3b74e138773e8c0c9f6eed2de061ddd7e6002245c15102
@@ -332,8 +450,47 @@ mod test {
         assert_eq!(traversal.visit_path_nibble().unwrap(), 0x1);
         assert_eq!(traversal.visit_path_nibble().unwrap(), 0x5);
         let mut parent_root_to_update = [0u8; 32];
-        node_kind
-            .traverse_node(node, &mut traversal, &mut parent_root_to_update)
-            .unwrap();
+        assert_eq!(
+            node_kind
+                .traverse_node(node, &mut traversal, &mut parent_root_to_update)
+                .unwrap(),
+            ProofType::LeafExclusion
+        );
+    }
+
+    /// Storage proof, data from block 17190873 (./data/blocks/17190873/block_state_proofs.json).
+    /// - account: 0xe01eaa990bedc239c2adf5a48352112f6a305bc0
+    /// - Storage key: 0x0000000000000000000000000000000000000000000000000000000000000000
+    /// - path (keccak(key)): 0x290decd9548b62a8d60345a988386fc84ba6bc95484008f6362f93160ef3e563
+    /// - value: 0x0
+    ///
+    /// 2 nodes:
+    /// - 2 branches, follow item 0x2 then item 0x9
+    /// - leaf node with items:
+    ///     - 0: even leaf with path 0x9c4f2ccf4dc398566b26d9d52e0b3f485b3554f10e0aa29c4491e7fdd99584
+    ///         - Completely different path (next nibble should be 0x0)
+    ///     - 1: value 0x8401064fbe
+    ///         - Completely different value (claimed value accompanying proof is 0x0)
+    #[test]
+    fn test_exclusion_leaf_for_zero_key() {
+        let node = rlp_decode_node(
+            "0xe7a0209c4f2ccf4dc398566b26d9d52e0b3f485b3554f10e0aa29c4491e7fdd99584858401064fbe",
+        );
+        let node_kind = NodeKind::deduce(2, 3, 2, &node).unwrap();
+        assert_eq!(node_kind, NodeKind::Leaf);
+
+        let mut traversal = NibblePath::init(
+            &hex_decode("0x290decd9548b62a8d60345a988386fc84ba6bc95484008f6362f93160ef3e563")
+                .unwrap(),
+        );
+        assert_eq!(traversal.visit_path_nibble().unwrap(), 0x2);
+        assert_eq!(traversal.visit_path_nibble().unwrap(), 0x9);
+        let mut parent_root_to_update = [0u8; 32];
+        assert_eq!(
+            node_kind
+                .traverse_node(node, &mut traversal, &mut parent_root_to_update)
+                .unwrap(),
+            ProofType::LeafExclusion
+        );
     }
 }
