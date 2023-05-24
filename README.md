@@ -22,7 +22,7 @@ subsets of the data and remain functional and trustless.
 
 ## Status
 
-> Toy/experimental
+> 🚧 Toy/experimental
 
 In order to construct proofs for the entire history of the chain an Ethereum execution
 node must provide both:

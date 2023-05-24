@@ -6,15 +6,13 @@ description = "Tool for single Ethereum archival block state proofs"
 
 [workspace]
 members = [
-    "archors-verify",
-    "archors-tracer",
-    "archors-inventory",
+    "crates/*",
 ]
 
 [dependencies]
-archors_inventory = { path = "archors-inventory"}
-archors_tracer = { path = "archors-tracer"}
-archors_verify = { path = "archors-verify"}
+archors_inventory = { path = "crates/inventory"}
+archors_tracer = { path = "crates/tracer"}
+archors_verify = { path = "crates/verify"}
 
 [dev-dependencies]
 anyhow = "1.0.69"
