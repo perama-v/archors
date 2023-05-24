@@ -13,19 +13,9 @@ members = [
 
 [dependencies]
 archors_inventory = { path = "archors-inventory"}
+archors_tracer = { path = "archors-tracer"}
 archors_verify = { path = "archors-verify"}
-ethers = "2.0.4"
-hex = "0.4.3"
-reqwest = { version = "0.11.14", features = ["json"] }
-rlp = "0.5.2"
-rlp-derive = "0.1.0"
-snap = "1.1.0"
-serde = {  version = "1.0.152", features = ["derive"] }
-serde_json = "1.0.94"
-ssz_rs = "0.8.0"
-thiserror = "1.0.40"
-tokio = { version = "1.26.0", features = ["full"] }
-url = "2.3.1"
 
 [dev-dependencies]
 anyhow = "1.0.69"
+tokio = { version = "1.26.0", features = ["full"] }
