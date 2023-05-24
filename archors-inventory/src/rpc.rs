@@ -1,4 +1,4 @@
-use ethers::types::{Block, EIP1186ProofResponse, H256};
+use ethers::types::{Block, EIP1186ProofResponse, H256, Transaction};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -23,7 +23,7 @@ pub(crate) struct JsonRpcRequest {
 pub(crate) struct BlockResponse {
     id: u32,
     jsonrpc: String,
-    pub(crate) result: Block<H256>,
+    pub(crate) result: Block<Transaction>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -62,7 +62,7 @@ pub(crate) fn get_block_by_number(block: &str) -> JsonRpcRequest {
     JsonRpcRequest {
         jsonrpc: "2.0".to_owned(),
         method: "eth_getBlockByNumber".to_owned(),
-        params: vec![json!(block), Value::Bool(false)],
+        params: vec![json!(block), Value::Bool(true)],
         id: 1,
     }
 }

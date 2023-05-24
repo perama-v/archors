@@ -6,6 +6,7 @@ use std::{
     path::PathBuf,
 };
 
+use ethers::types::{Block, Transaction};
 use reqwest::Client;
 use thiserror::Error;
 use url::{ParseError, Url};
@@ -164,6 +165,15 @@ pub fn get_proofs_from_cache(block: u64) -> Result<BlockProofs, CacheError> {
     let reader = BufReader::new(file);
     let block_proofs = serde_json::from_reader(reader)?;
     Ok(block_proofs)
+}
+
+pub fn get_proof_from_cache(block: u64) -> Result<Block<Transaction>, CacheError> {
+    //let block_cache_path = CacheFileNames::new(block).block_with_transactions()
+    todo!("cache block with full transactions");
+    //let file = File::open(block_cache_path)?;
+    //let reader = BufReader::new(file);
+    //let block = serde_json::from_reader(reader)?;
+    //Ok(block)
 }
 
 /// Helper for consistent cached file and directory names.
