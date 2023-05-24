@@ -7,10 +7,12 @@ description = "Tool for single Ethereum archival block state proofs"
 [workspace]
 members = [
     "archors-verify",
-    "archors-tracer"
+    "archors-tracer",
+    "archors-inventory",
 ]
 
 [dependencies]
+archors_inventory = { path = "archors-inventory"}
 archors_verify = { path = "archors-verify"}
 ethers = "2.0.4"
 hex = "0.4.3"

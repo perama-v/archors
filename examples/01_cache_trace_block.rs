@@ -1,5 +1,5 @@
 use anyhow::Result;
-use archors::cache::store_block_prestate_tracer;
+use archors_inventory::cache::store_block_prestate_tracer;
 
 /// Uses a cached block to trace each transaction. Caches the result.
 #[tokio::main]

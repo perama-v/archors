@@ -5,8 +5,6 @@ use std::collections::HashMap;
 use ethers::types::{EIP1186ProofResponse, H160};
 use serde::{Deserialize, Serialize};
 
-
-
 /// Properties that state representation must have.
 ///
 /// This is useful if there is a more efficient way to represent
@@ -18,7 +16,6 @@ trait BlockState {
     /// Modify a value for a storage key.
     fn write_key() {}
 }
-
 
 /// Helper for caching
 #[derive(Deserialize, Serialize)]

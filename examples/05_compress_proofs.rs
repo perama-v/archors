@@ -1,5 +1,5 @@
 use anyhow::Result;
-use archors::cache::compress_proofs;
+use archors_inventory::cache::compress_proofs;
 
 /// Uses a cached block accessed state proof, compresses the file.
 fn main() -> Result<()> {

@@ -1,5 +1,5 @@
 use anyhow::Result;
-use archors::cache::store_block_with_transactions;
+use archors_inventory::cache::store_block_with_transactions;
 
 /// Request and store a block for later use.
 #[tokio::main]

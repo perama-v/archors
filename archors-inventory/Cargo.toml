@@ -5,3 +5,11 @@ edition = "2021"
 description = "A tool for discovering which state was accessed for an Ethereum block"
 
 [dependencies]
+ethers = "2.0.4"
+hex = "0.4.3"
+reqwest = { version = "0.11.14", features = ["json"] }
+serde = {  version = "1.0.152", features = ["derive"] }
+serde_json = "1.0.94"
+snap = "1.1.0"
+thiserror = "1.0.40"
+url = "2.3.1"

@@ -1,5 +1,5 @@
 use anyhow::Result;
-use archors::cache::compress_deduplicated_state;
+use archors_inventory::cache::compress_deduplicated_state;
 
 /// Uses a cached deduplicated block prestate, compress the data for reduced
 /// disk use.

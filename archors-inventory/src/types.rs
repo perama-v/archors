@@ -1,6 +1,6 @@
 use std::{collections::HashMap, fmt::Display};
 
-use archors_verify::eip1186::{verify_proof, VerifyProofError};
+// use archors_verify::eip1186::{verify_proof, VerifyProofError};
 use ethers::types::{EIP1186ProofResponse, H256};
 use serde::{Deserialize, Serialize};
 
@@ -124,16 +124,6 @@ impl BlockStateAccesses {
         BlockStateAccesses {
             access_data: HashMap::new(),
         }
-    }
-}
-
-impl BlockProofs {
-    /// Verifies the proofs present for the block with respect to a state root.
-    pub fn verify(&self, state_root: &[u8]) -> Result<(), VerifyProofError> {
-        for proof in self.proofs.values() {
-            verify_proof(state_root, proof)?
-        }
-        Ok(())
     }
 }
 

@@ -1,5 +1,5 @@
 use anyhow::Result;
-use archors::cache::store_deduplicated_state;
+use archors_inventory::cache::store_deduplicated_state;
 
 /// Uses a cached block prestate and groups account state data when it is accessed
 /// in more than one transaction during a block.

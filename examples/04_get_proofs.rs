@@ -1,7 +1,7 @@
 use std::env;
 
 use anyhow::Result;
-use archors::cache::store_state_proofs;
+use archors_inventory::cache::store_state_proofs;
 
 /// Uses cached account and storage keys and gets a proof with respect
 /// to a block.

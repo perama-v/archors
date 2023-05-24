@@ -158,7 +158,7 @@ pub fn compress_proofs(target_block: u64) -> Result<(), CacheError> {
 }
 
 /// Retrieves the accessed-state proofs for a single block from cache.
-pub fn get_proof_from_cache(block: u64) -> Result<BlockProofs, CacheError> {
+pub fn get_proofs_from_cache(block: u64) -> Result<BlockProofs, CacheError> {
     let proof_cache_path = CacheFileNames::new(block).block_state_proofs();
     let file = File::open(proof_cache_path)?;
     let reader = BufReader::new(file);
