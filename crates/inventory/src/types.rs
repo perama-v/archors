@@ -1,14 +1,14 @@
 use std::{collections::HashMap, fmt::Display};
 
 // use archors_verify::eip1186::{verify_proof, VerifyProofError};
-use ethers::types::{EIP1186ProofResponse, H256};
+use ethers::types::{EIP1186ProofResponse, H160, H256};
 use serde::{Deserialize, Serialize};
 
 /// Helper for caching
 #[derive(Deserialize, Serialize)]
 pub struct BlockProofs {
     /// Map of account -> proof
-    pub proofs: HashMap<String, EIP1186ProofResponse>,
+    pub proofs: HashMap<H160, EIP1186ProofResponse>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -58,7 +58,8 @@ pub type StorageSlot = HashMap<String, String>;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct BlockStateAccesses {
-    /// Mapping of accounts to accessed states. An account may have slots accessed in different
+    /// Mapping of account addresses to accessed states.
+    /// An account may have slots accessed in different
     /// transactions, they are aggregated here.
     pub(crate) access_data: HashMap<String, AccountState>,
 }

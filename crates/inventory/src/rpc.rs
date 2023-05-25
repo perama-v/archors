@@ -1,4 +1,4 @@
-use ethers::types::{Block, EIP1186ProofResponse, H256, Transaction};
+use ethers::types::{Block, EIP1186ProofResponse, Transaction};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 

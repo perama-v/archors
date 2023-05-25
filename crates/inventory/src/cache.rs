@@ -6,7 +6,10 @@ use std::{
     path::PathBuf,
 };
 
-use ethers::types::{Block, Transaction};
+use ethers::{
+    types::{Block, Transaction, H160, H256},
+    utils::keccak256,
+};
 use reqwest::Client;
 use thiserror::Error;
 use url::{ParseError, Url};
@@ -17,7 +20,7 @@ use crate::{
         BlockPrestateInnerTx, BlockPrestateResponse, BlockResponse,
     },
     types::{BlockProofs, BlockStateAccesses},
-    utils::{compress, UtilsError},
+    utils::{compress, hex_decode, UtilsError},
 };
 
 static CACHE_DIR: &str = "data/blocks";
@@ -116,6 +119,7 @@ pub async fn store_state_proofs(url: &str, target_block: u64) -> Result<(), Cach
 
     for account in accounts_to_prove {
         let proof_request = eth_get_proof(&account, &block_number_hex);
+        let account = H160::from_slice(&hex_decode(account.address)?);
         let response: AccountProofResponse = client
             .post(Url::parse(url)?)
             .json(&proof_request)
@@ -123,7 +127,7 @@ pub async fn store_state_proofs(url: &str, target_block: u64) -> Result<(), Cach
             .await?
             .json()
             .await?;
-        block_proofs.proofs.insert(account.address, response.result);
+        block_proofs.proofs.insert(account, response.result);
     }
     fs::create_dir_all(names.dirname())?;
     let mut block_file = File::create(names.block_state_proofs())?;
@@ -167,12 +171,31 @@ pub fn get_proofs_from_cache(block: u64) -> Result<BlockProofs, CacheError> {
     Ok(block_proofs)
 }
 
+/// Retrieves a single block that has been stored.
 pub fn get_block_from_cache(block: u64) -> Result<Block<Transaction>, CacheError> {
     let block_cache_path = CacheFileNames::new(block).block_with_transactions();
     let file = File::open(block_cache_path)?;
     let reader = BufReader::new(file);
     let block = serde_json::from_reader(reader)?;
     Ok(block)
+}
+
+/// Retrieves the contract code for a particular cached block.
+pub fn get_contracts_from_cache(block: u64) -> Result<HashMap<H256, Vec<u8>>, CacheError> {
+    let block_state_path = CacheFileNames::new(block).block_accessed_state_deduplicated();
+    let file = File::open(block_state_path)?;
+    let reader = BufReader::new(file);
+    let state: BlockStateAccesses = serde_json::from_reader(reader)?;
+
+    let mut code_map = HashMap::new();
+    for (_, account) in state.access_data {
+        if let Some(code_string) = account.code {
+            let code = hex_decode(code_string)?;
+            let code_hash = H256::from_slice(&keccak256(&code));
+            code_map.insert(code_hash, code);
+        }
+    }
+    Ok(code_map)
 }
 
 /// Helper for consistent cached file and directory names.
