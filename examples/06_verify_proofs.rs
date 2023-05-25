@@ -1,6 +1,6 @@
 use anyhow::Result;
 use archors_inventory::{cache::get_proofs_from_cache, types::BlockProofs, utils::hex_decode};
-use archors_verify::eip1186::{verify_proof};
+use archors_verify::eip1186::verify_proof;
 
 /// Uses cached accessed-state proofs and verifies them.
 fn main() -> Result<()> {
