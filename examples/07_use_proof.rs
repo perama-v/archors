@@ -1,7 +1,8 @@
-
 use anyhow::Result;
-use archors_tracer::trace::trace_block;
-use archors_inventory::cache::{get_block_from_cache, get_proofs_from_cache};
+use archors_inventory::cache::{
+    get_block_from_cache, get_contracts_from_cache, get_proofs_from_cache,
+};
+use archors_tracer::{state::BlockProofsBasic, trace::trace_block};
 
 /// Consume one block state proof.
 fn main() -> Result<()> {
@@ -10,10 +11,14 @@ fn main() -> Result<()> {
     let block = get_block_from_cache(block_number)?;
 
     // Get state proofs (from peer / disk).
-    let state = get_proofs_from_cache(block_number)?;
+    let required_state = get_proofs_from_cache(block_number)?;
+    let required_code = get_contracts_from_cache(block_number)?;
 
     // Trace block using state (eth_debugTraceTransaction).
-    let trace = trace_block(block, state)?;
-
+    let state = BlockProofsBasic {
+        proofs: required_state.proofs,
+        code: required_code,
+    };
+    let trace = trace_block(block, &state)?;
     Ok(())
 }
