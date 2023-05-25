@@ -1,67 +1,89 @@
 //! For executing a block using state.
 
-use std::str::FromStr;
-
-use archors_inventory::{types::BlockProofs, utils::hex_decode};
 use ethers::types::{Block, Transaction};
 use revm::{
-    db::{CacheDB, EmptyDB},
-    primitives::{AccountInfo, Bytes, TransactTo, B160, U256},
+    primitives::{Bytes, EVMError, Env, ExecutionResult, TransactTo, B160},
     EVM,
 };
 use thiserror::Error;
 
+use crate::{
+    state::{build_state_from_proofs, CompleteAccounts, StateError},
+    utils::{eu256_to_ru256, UtilsError},
+};
+
 /// An error with tracing a block
-#[derive(Debug, Error, Eq, PartialEq)]
+#[derive(Debug, Error, PartialEq)]
 pub enum TraceError {
-    #[error("TODO")]
-    Todo,
+    #[error("StateError {0}")]
+    StateError(#[from] StateError),
+    #[error("UtilsError {0}")]
+    UtilsError(#[from] UtilsError),
+    #[error("Unable to commit transaction (index = {index}, {error}")]
+    TxCommitFailed { error: String, index: usize },
 }
 
-pub fn trace_block(block: Block<Transaction>, state_db: &BlockProofs) -> Result<(), TraceError> {
+pub fn trace_block<T>(block: Block<Transaction>, block_proofs: &T) -> Result<(), TraceError>
+where
+    T: CompleteAccounts,
+{
     // For all important states, load into db.
-    let address = B160::default();
-    let account = AccountInfo::default();
-    let mut cache_db = CacheDB::new(EmptyDB::default());
-    cache_db.insert_account_info(address, account);
-
-    let slot = U256::default();
-    let value = U256::default();
-    cache_db
-        .insert_account_storage(address, slot, value)
-        .unwrap();
+    let cache_db = build_state_from_proofs(block_proofs)?;
 
     let mut evm = EVM::new();
     // insert the db
     evm.database(cache_db);
 
-    for transaction in block.transactions {}
-    // change that to whatever caller you want to be
-    evm.env.tx.caller = B160::from_str("0x0000000000000000000000000000000000000000").unwrap();
-    // account you want to transact with
-    evm.env.tx.transact_to = TransactTo::Call(B160::default());
-    // calldata formed via abigen
-    evm.env.tx.data = Bytes::from(hex_decode(&"0xabcd1234").unwrap());
-    // transaction value in wei
-    evm.env.tx.value = U256::from(0);
-    evm.transact_commit().unwrap();
+    for (index, tx) in block.transactions.into_iter().enumerate() {
+        set_up_tx(&mut evm.env, tx)?;
+        let outcome = evm.transact_commit().map_err(|e| {
+            let error = match e {
+                EVMError::Transaction(t) => serde_json::to_string(&t).unwrap(),
+                EVMError::Database(_d) => "database error".to_string(), // _d is Infallible
+                EVMError::PrevrandaoNotSet => String::from("prevrandao error"),
+            };
+            TraceError::TxCommitFailed { error, index }
+        })?;
+        println!("\n\n{:?}", outcome);
+    }
 
     Ok(())
 }
+
+/// Set up the transaction details in the evm environment.
+fn set_up_tx(env: &mut Env, tx: Transaction) -> Result<(), TraceError> {
+    env.tx.caller = B160::from(tx.from.0);
+    match tx.to {
+        Some(dest) => {
+            env.tx.transact_to = TransactTo::Call(B160::from(dest));
+        }
+        None => todo!("handle contract creation"),
+    }
+    env.tx.data = tx.input.0;
+    env.tx.value = eu256_to_ru256(tx.value)?;
+    Ok(())
+}
+
+// Execute a transaction
 
 #[cfg(test)]
 mod test {
     use std::collections::HashMap;
 
-    use archors_inventory::types::BlockProofs;
-    use revm::db::{CacheDB, DatabaseRef, EmptyDB};
+    use revm::{
+        db::{CacheDB, DatabaseRef, EmptyDB},
+        primitives::{AccountInfo, U256},
+    };
+
+    use crate::state::BlockProofsBasic;
 
     use super::*;
     #[test]
     fn test_trace_block() {
         let block: Block<Transaction> = Block::default();
-        let state = BlockProofs {
+        let state = BlockProofsBasic {
             proofs: HashMap::default(),
+            code: HashMap::default(),
         };
         trace_block(block, &state).unwrap()
     }
