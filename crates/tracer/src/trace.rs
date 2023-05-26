@@ -17,10 +17,12 @@ pub enum TraceError {
     StateError(#[from] StateError),
     #[error("UtilsError {0}")]
     UtilsError(#[from] UtilsError),
-    #[error("Unable to commit transaction (index = {index}, {error}")]
-    TxCommitFailed { error: String, index: usize },
     #[error("EvmError {0}")]
     EvmError(#[from] EvmError),
+    #[error("Unable to set transaction (index {index}) environment {source}")]
+    TxEnvError{source: EvmError, index: usize},
+    #[error("Unable to execute transaction (index {index}) {source}")]
+    TxExecutionError{source: EvmError, index: usize}
 }
 
 pub fn trace_block<T>(block: Block<Transaction>, block_proofs: &T) -> Result<(), TraceError>
@@ -38,14 +40,18 @@ where
 
     for (index, tx) in block.transactions.into_iter().enumerate() {
         let outcome = block_evm
-            .add_transaction_environment(tx)?
-            .execute_with_inspector_eip3155()?;
+            .add_transaction_environment(tx)
+            .map_err(|source| TraceError::TxEnvError{source, index})?
+            .execute_with_inspector_eip3155()
+            .map_err(|source| TraceError::TxExecutionError{source, index})?;
 
         println!("\n\nTransaction {index}, outcome: {outcome:?}");
     }
 
     Ok(())
 }
+
+
 
 #[cfg(test)]
 mod test {
