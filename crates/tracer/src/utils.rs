@@ -34,26 +34,19 @@ pub fn eu256_to_ru256(input: ethers::types::U256) -> Result<U256, UtilsError> {
 }
 
 /// Ethers U64 to revm U256
-pub fn eu64_to_ru256(input: ethers::types::U64) -> Result<U256, UtilsError> {
-    let mut bytes = [0u8; 32];
-    input.to_big_endian(&mut bytes);
-    let value = U256::from_be_bytes(bytes);
-    Ok(value)
+pub fn eu64_to_ru256(input: ethers::types::U64) -> U256 {
+    U256::from_limbs_slice(input.0.as_slice())
 }
 
 /// Ethers U256 to u64
 pub fn eu256_to_u64(input: ethers::types::U256) -> u64 {
-    let mut bytes = [0u8; 8];
-    input.to_big_endian(&mut bytes);
-
-    u64::from_be_bytes(bytes)
+    input.as_u64()
 }
 
 /// revm U256 to u64
 pub fn ru256_to_u64(input: U256) -> u64 {
-    let bytes = input.to_be_bytes();
-
-    u64::from_be_bytes(bytes)
+    let limbs = input.as_limbs();
+    limbs[0]
 }
 
 /// Ethers H256 to revm U256
@@ -101,7 +94,7 @@ mod test {
     #[test]
     fn test_eu64_to_ru256() {
         let input = ethers::types::U64::from_str("0x1234").unwrap();
-        let derived: U256 = eu64_to_ru256(input).unwrap();
+        let derived: U256 = eu64_to_ru256(input);
         let expected: U256 = U256::try_from_be_slice(&hex_decode("0x1234").unwrap()).unwrap();
         assert_eq!(derived, expected);
     }
@@ -110,7 +103,7 @@ mod test {
     fn test_eu256_to_u64() {
         let input = ethers::types::U256::from_str("0x1234").unwrap();
         let derived: u64 = eu256_to_u64(input);
-        let expected: u64 = u64::from_str("0x1234").unwrap();
+        let expected: u64 = 4660u64; // 0x1234
         assert_eq!(derived, expected);
     }
 
@@ -118,7 +111,7 @@ mod test {
     fn test_ru256_to_u64() {
         let input = U256::from_str("0x1234").unwrap();
         let derived: u64 = ru256_to_u64(input);
-        let expected: u64 = u64::from_str("0x1234").unwrap();
+        let expected: u64 = 4660u64; // 0x1234
         assert_eq!(derived, expected);
     }
 
@@ -135,14 +128,16 @@ mod test {
 
     #[test]
     fn test_access_list_e_to_r() {
+        let address ="0x0000000000000000000000000000000000009876";
+        let hash = "0x0000000000000000000000000000000000000000000000000000000000001234";
         let input: AccessList = AccessList(vec![AccessListItem {
-            address: H160::from_str("0x00004400").unwrap(),
-            storage_keys: vec![H256::from_str("0x1234").unwrap()],
+            address: H160::from_str(address).unwrap(),
+            storage_keys: vec![H256::from_str(hash).unwrap()],
         }]);
 
         let derived = access_list_e_to_r(input);
-        let address = B160::from_str("0x00004400").unwrap();
-        let storage = U256::try_from_be_slice(&hex_decode("0x1234").unwrap()).unwrap();
+        let address = B160::from_str(address).unwrap();
+        let storage = U256::try_from_be_slice(&hex_decode(hash).unwrap()).unwrap();
         let expected: RevmAccessList = vec![(address, vec![storage])];
         assert_eq!(derived, expected);
     }

@@ -70,7 +70,7 @@ impl BlockEvm {
         }
         let env = &mut self.evm.env.block;
 
-        env.number = eu64_to_ru256(block.number.ok_or(EvmError::NoBlockNumber)?)?;
+        env.number = eu64_to_ru256(block.number.ok_or(EvmError::NoBlockNumber)?);
         env.coinbase = block.author.ok_or(EvmError::NoBlockAuthor)?.into();
         env.timestamp = block.timestamp.into();
         env.gas_limit = block.gas_limit.into();
