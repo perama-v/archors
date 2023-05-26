@@ -19,6 +19,6 @@ fn main() -> Result<()> {
         proofs: required_state.proofs,
         code: required_code,
     };
-    let trace = trace_block(block, &state)?;
+    trace_block(block, &state)?;
     Ok(())
 }

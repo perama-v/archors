@@ -6,7 +6,7 @@ use ethers::types::{Block, Transaction};
 use revm::{
     db::{CacheDB, EmptyDB},
     inspectors::TracerEip3155,
-    primitives::{EVMError, ExecutionResult, TransactTo, TxEnv, B160, U256},
+    primitives::{EVMError, ExecutionResult, TransactTo, U256},
     EVM,
 };
 use thiserror::Error;
@@ -70,8 +70,8 @@ impl BlockEvm {
         }
         let env = &mut self.evm.env.block;
 
-        env.number = eu64_to_ru256(block.number.ok_or_else(|| EvmError::NoBlockNumber)?)?;
-        env.coinbase = block.author.ok_or_else(|| EvmError::NoBlockAuthor)?.into();
+        env.number = eu64_to_ru256(block.number.ok_or(EvmError::NoBlockNumber)?)?;
+        env.coinbase = block.author.ok_or(EvmError::NoBlockAuthor)?.into();
         env.timestamp = block.timestamp.into();
         env.gas_limit = block.gas_limit.into();
         env.basefee = block.base_fee_per_gas.unwrap_or_default().into();
@@ -107,7 +107,7 @@ impl BlockEvm {
             None => todo!("handle tx create scheme"), // TransactTo::Create(),
         };
         env.value = tx.value.into();
-        env.data = tx.input.0.into();
+        env.data = tx.input.0;
         env.chain_id = Some(ru256_to_u64(self.evm.env.cfg.chain_id));
         env.nonce = Some(eu256_to_u64(tx.nonce));
         env.access_list = match tx.access_list {
@@ -124,16 +124,13 @@ impl BlockEvm {
     /// next transaction to be added.
     ///
     ///
-    pub fn execute_with_inspector_EIP3155(&mut self) -> Result<ExecutionResult, EvmError> {
+    pub fn execute_with_inspector_eip3155(&mut self) -> Result<ExecutionResult, EvmError> {
         self.tx_env_status.ready_to_execute()?;
         // Initialize the inspector
         let inspector = TracerEip3155::new(Box::new(stdout()), true, true);
 
         // see: https://github.com/bluealloy/revm/blob/main/bins/revme/src/statetest/runner.rs#L259
-        let outcome = self
-            .evm
-            .inspect_commit(inspector)
-            .map_err(EvmError::from)?;
+        let outcome = self.evm.inspect_commit(inspector).map_err(EvmError::from)?;
         self.tx_env_status.executed()?;
         Ok(outcome)
     }

@@ -1,19 +1,13 @@
 //! For executing a block using state.
 
-use std::io::stdout;
-
 use ethers::types::{Block, Transaction};
-use revm::{
-    inspectors::TracerEip3155,
-    primitives::{EVMError, Env, TransactTo, B160, U256},
-    Inspector, EVM,
-};
+use revm::primitives::U256;
 use thiserror::Error;
 
 use crate::{
     evm::{BlockEvm, EvmError},
     state::{build_state_from_proofs, CompleteAccounts, StateError},
-    utils::{eu256_to_ru256, UtilsError},
+    utils::UtilsError,
 };
 
 /// An error with tracing a block
@@ -45,7 +39,7 @@ where
     for (index, tx) in block.transactions.into_iter().enumerate() {
         let outcome = block_evm
             .add_transaction_environment(tx)?
-            .execute_with_inspector_EIP3155()?;
+            .execute_with_inspector_eip3155()?;
 
         println!("\n\nTransaction {index}, outcome: {outcome:?}");
     }

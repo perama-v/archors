@@ -45,22 +45,22 @@ pub fn eu64_to_ru256(input: ethers::types::U64) -> Result<U256, UtilsError> {
 pub fn eu256_to_u64(input: ethers::types::U256) -> u64 {
     let mut bytes = [0u8; 8];
     input.to_big_endian(&mut bytes);
-    let value = u64::from_be_bytes(bytes);
-    value
+
+    u64::from_be_bytes(bytes)
 }
 
 /// revm U256 to u64
 pub fn ru256_to_u64(input: U256) -> u64 {
     let bytes = input.to_be_bytes();
-    let value = u64::from_be_bytes(bytes);
-    value
+
+    u64::from_be_bytes(bytes)
 }
 
 /// Ethers H256 to revm U256
 pub fn eh256_to_ru256(input: ethers::types::H256) -> U256 {
     let bytes: &[u8; 32] = input.as_fixed_bytes();
-    let value = U256::from_be_bytes(*bytes);
-    value
+
+    U256::from_be_bytes(*bytes)
 }
 
 /// Helper for revm access list type conversion.
@@ -76,11 +76,7 @@ pub fn access_list_e_to_r(input: AccessList) -> RevmAccessList {
         .into_iter()
         .map(|list| {
             let out_address: B160 = list.address.0.into();
-            let out_values: Vec<U256> = list
-                .storage_keys
-                .into_iter()
-                .map(|val| eh256_to_ru256(val))
-                .collect();
+            let out_values: Vec<U256> = list.storage_keys.into_iter().map(eh256_to_ru256).collect();
             (out_address, out_values)
         })
         .collect()
