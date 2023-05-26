@@ -65,7 +65,7 @@ impl CompleteAccounts for BlockProofsBasic {
             balance: account.balance.into(),
             nonce: account.nonce.as_u64(),
             code_hash: account.code_hash.0.into(),
-            code: code.into(),
+            code,
         };
         Ok(info)
     }
@@ -80,7 +80,7 @@ impl CompleteAccounts for BlockProofsBasic {
 
         for storage_data in &account.storage_proof {
             // U256 ethers -> U256 revm
-            let key = eh256_to_ru256(storage_data.key)?;
+            let key = eh256_to_ru256(storage_data.key);
             let value = eu256_to_ru256(storage_data.value)?;
 
             storage.insert(key, value);
@@ -90,14 +90,14 @@ impl CompleteAccounts for BlockProofsBasic {
     }
     fn addresses(&self) -> Vec<B160> {
         self.proofs
-            .iter()
-            .map(|(address, _proof)| B160::from(address.0))
+            .keys()
+            .map(|address| B160::from(address.0))
             .collect()
     }
 }
 
 /// Inserts state from a collection of EIP-1186 proof into an in-memory DB.
-/// The DB can then be used to trace a block, recording state changes as they occur.
+/// The DB can then be used by the EVM to read/write state during execution.
 pub fn build_state_from_proofs<T>(block_proofs: &T) -> Result<CacheDB<EmptyDB>, StateError>
 where
     T: CompleteAccounts,
