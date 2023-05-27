@@ -193,3 +193,116 @@ With 100 nodes: 8.5 TB
 It is noted that contract data and merkle tree nodes are common amongst different blocks.
 This represents compressible data for a single node. The prevalence of these occurrences
 and therefore the amount of additional compression available is unknown.
+
+## Trace data
+
+What does tracing get you? Every step in the EVM.
+
+```command
+cargo run --release --example 07_use_proof |  grep '"REVERT"' | jq
+```
+This example is set to trace transaction index 14 in block 17190873. The
+result is filtered to only include steps that involved a `REVERT` opcode.
+
+Here we can see the `REVERT`s in action at stack depths 3, 2 and then 1 at
+program counters 2080, 8672, 17898. One could create a parser that:
+
+- The contract that was reverted from
+- The function that was being called
+- The values passed to that contract
+
+```json
+{
+  "pc": 2080,
+  "op": 253,
+  "gas": "0x85044",
+  "gasCost": "0x0",
+  "memSize": 256,
+  "stack": [
+    "0xa9059cbb",
+    "0x2f2",
+    "0x53ae61d9e66d03d90a13bbb16b69187037c90f0d",
+    "0x17d08f5af48b00",
+    "0x0",
+    "0x981",
+    "0x9aaab62d0a33caacab26f213d1f41ec103c82407",
+    "0x53ae61d9e66d03d90a13bbb16b69187037c90f0d",
+    "0x17d08f5af48b00",
+    "0x0",
+    "0x64",
+    "0x80"
+  ],
+  "depth": 3,
+  "opName": "REVERT"
+}
+{
+  "pc": 8672,
+  "op": 253,
+  "gas": "0x871d8",
+  "gasCost": "0x0",
+  "memSize": 576,
+  "stack": [
+    "0x22c0d9f",
+    "0x257",
+    "0x0",
+    "0x17d08f5af48b00",
+    "0x53ae61d9e66d03d90a13bbb16b69187037c90f0d",
+    "0xa4",
+    "0x0",
+    "0x29f2360d4550f0ab",
+    "0x10878fe6d285800",
+    "0x0",
+    "0x0",
+    "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+    "0xfc720f8d776e87e9dfb0f59732de8b259875fa32",
+    "0x8e1",
+    "0xfc720f8d776e87e9dfb0f59732de8b259875fa32",
+    "0x53ae61d9e66d03d90a13bbb16b69187037c90f0d",
+    "0x17d08f5af48b00",
+    "0x0",
+    "0x124",
+    "0x64",
+    "0x1c4"
+  ],
+  "depth": 2,
+  "opName": "REVERT"
+}
+{
+  "pc": 17898,
+  "op": 253,
+  "gas": "0x895b0",
+  "gasCost": "0x0",
+  "memSize": 1184,
+  "stack": [
+    "0x7ff36ab5",
+    "0x340",
+    "0x71afd498d0000",
+    "0xa4",
+    "0x2",
+    "0x53ae61d9e66d03d90a13bbb16b69187037c90f0d",
+    "0x1787586c4fa8a01c71c7",
+    "0xe0",
+    "0x1787586c4fa8a01c71c7",
+    "0x251b",
+    "0xe0",
+    "0x2ba",
+    "0x53ae61d9e66d03d90a13bbb16b69187037c90f0d",
+    "0x0",
+    "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+    "0xfc720f8d776e87e9dfb0f59732de8b259875fa32",
+    "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+    "0x17d08f5af48b00",
+    "0x0",
+    "0x17d08f5af48b00",
+    "0x53ae61d9e66d03d90a13bbb16b69187037c90f0d",
+    "0x9aaab62d0a33caacab26f213d1f41ec103c82407",
+    "0x22c0d9f",
+    "0x49b",
+    "0x1",
+    "0x64",
+    "0x0"
+  ],
+  "depth": 1,
+  "opName": "REVERT"
+}
+```
