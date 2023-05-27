@@ -110,14 +110,14 @@ impl BlockStateAccesses {
     pub fn get_all_accounts_to_prove(&self) -> Vec<AccountToProve> {
         let mut accounts: Vec<AccountToProve> = vec![];
         for account in &self.access_data {
+            let address = account.0.to_owned();
+            let mut slots: Vec<String> = vec![];
             if let Some(storage) = &account.1.storage {
-                let address = account.0.to_owned();
-                let mut slots: Vec<String> = vec![];
                 for slot in storage.keys() {
                     slots.push(slot.to_owned())
                 }
-                accounts.push(AccountToProve { address, slots });
             }
+            accounts.push(AccountToProve { address, slots });
         }
         accounts
     }

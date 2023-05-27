@@ -64,6 +64,19 @@ pub async fn store_block_with_transactions(url: &str, target_block: u64) -> Resu
 }
 
 /// Calls debug trace transaction with prestate tracer and caches the result.
+///
+/// This inclues accounts, each with
+/// - balance
+///     -
+/// - code
+///     - Needed to be able to execute the code.
+///     - Codehash will be part of the block state proof.
+/// - nonce
+///     - Does not need to be in block state proof.
+///     - Tx sender nonce is in the block (eth_getBlockByNumber).
+/// - storage
+///     - Composed of (key, value).
+///     - Will be used with eth_getProof.
 pub async fn store_block_prestate_tracer(url: &str, target_block: u64) -> Result<(), CacheError> {
     let client = Client::new();
     let block_number_hex = format!("0x{:x}", target_block);
@@ -105,9 +118,14 @@ pub fn store_deduplicated_state(target_block: u64) -> Result<(), CacheError> {
 
 /// Uses a cached record of accounts and storage slots and for each account calls
 /// eth_getProof for those slots then stores all the proofs together.
+///
+/// The block used for eth_getProof will be the block prior to the target block.
+/// This is because the state will be used to execute a block with.
+///
+/// The prior block's state root is the root after transactions have been applied.
+/// Hence it is the state on which the target block should be applied.
 pub async fn store_state_proofs(url: &str, target_block: u64) -> Result<(), CacheError> {
     let client = Client::new();
-    let block_number_hex = format!("0x{:x}", target_block);
     let names = CacheFileNames::new(target_block);
     let data = fs::read_to_string(names.block_accessed_state_deduplicated())?;
     let state_accesses: BlockStateAccesses = serde_json::from_str(&data)?;
@@ -117,8 +135,9 @@ pub async fn store_state_proofs(url: &str, target_block: u64) -> Result<(), Cach
         proofs: HashMap::new(),
     };
 
+    let prior_block_number_hex = format!("0x{:x}", target_block - 1);
     for account in accounts_to_prove {
-        let proof_request = eth_get_proof(&account, &block_number_hex);
+        let proof_request = eth_get_proof(&account, &prior_block_number_hex);
         let account = H160::from_slice(&hex_decode(account.address)?);
         let response: AccountProofResponse = client
             .post(Url::parse(url)?)
@@ -130,7 +149,7 @@ pub async fn store_state_proofs(url: &str, target_block: u64) -> Result<(), Cach
         block_proofs.proofs.insert(account, response.result);
     }
     fs::create_dir_all(names.dirname())?;
-    let mut block_file = File::create(names.block_state_proofs())?;
+    let mut block_file = File::create(names.prior_block_state_proofs())?;
     block_file.write_all(serde_json::to_string_pretty(&block_proofs)?.as_bytes())?;
     Ok(())
 }
@@ -154,17 +173,17 @@ pub fn compress_deduplicated_state(target_block: u64) -> Result<(), CacheError> 
 /// common between proofs.
 pub fn compress_proofs(target_block: u64) -> Result<(), CacheError> {
     let names = CacheFileNames::new(target_block);
-    let block_file = names.block_state_proofs();
+    let block_file = names.prior_block_state_proofs();
     let data = fs::read(block_file)?;
     let compressed = compress(data)?;
-    let mut file = File::create(names.block_state_proofs_compressed())?;
+    let mut file = File::create(names.prior_block_state_proofs_compressed())?;
     file.write_all(&compressed)?;
     Ok(())
 }
 
 /// Retrieves the accessed-state proofs for a single block from cache.
 pub fn get_proofs_from_cache(block: u64) -> Result<BlockProofs, CacheError> {
-    let proof_cache_path = CacheFileNames::new(block).block_state_proofs();
+    let proof_cache_path = CacheFileNames::new(block).prior_block_state_proofs();
     let file = File::open(proof_cache_path)?;
     let reader = BufReader::new(file);
     let block_proofs = serde_json::from_reader(reader)?;
@@ -221,11 +240,12 @@ impl CacheFileNames {
     fn block_prestate_trace(&self) -> PathBuf {
         self.dirname().join("block_prestate_trace.json")
     }
-    fn block_state_proofs(&self) -> PathBuf {
-        self.dirname().join("block_state_proofs.json")
+    /// The state proof is eth_getProof for the prior block.
+    fn prior_block_state_proofs(&self) -> PathBuf {
+        self.dirname().join("prior_block_state_proofs.json")
     }
-    fn block_state_proofs_compressed(&self) -> PathBuf {
-        self.dirname().join("block_state_proofs.snappy")
+    fn prior_block_state_proofs_compressed(&self) -> PathBuf {
+        self.dirname().join("prior_block_state_proofs.snappy")
     }
     fn block_with_transactions(&self) -> PathBuf {
         self.dirname().join("block_with_transactions.json")
