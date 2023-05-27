@@ -31,13 +31,12 @@ node must provide both:
 
 ## Modes
 
-### Generate
-
-Start with a block trace, generate a Merkle proof of any state accessed by that block.
-
-### Consume
-
-Start with a block state proof, generate a trace of that block.
+|example number|crate used|function|
+|-|-|-|
+|1, 2, 3|inventory|obtain and cache block data from a node|
+|4, 5|inventory|create merkle proof for block state|
+|6|verify|verify merkle proof for block|
+|7|tracer|locally produce `debug_traceTransaction` / `debug_traceBlock` using proof data|
 
 ## Use case
 
