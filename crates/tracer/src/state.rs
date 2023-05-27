@@ -60,7 +60,6 @@ impl CompleteAccounts for BlockProofsBasic {
             let revm_bytes = Bytes::copy_from_slice(data);
             Bytecode::new_raw(revm_bytes)
         });
-
         let info = AccountInfo {
             balance: account.balance.into(),
             nonce: account.nonce.as_u64(),
@@ -116,4 +115,38 @@ where
             })?;
     }
     Ok(db)
+}
+
+#[cfg(test)]
+mod test {
+    use std::str::FromStr;
+
+    use revm::primitives::B256;
+
+    use super::*;
+
+    #[test]
+    fn test_block_proofs_basic_get_account_info() {
+        let mut state = BlockProofsBasic {
+            proofs: HashMap::default(),
+            code: HashMap::default(),
+        };
+        let mut proof = EIP1186ProofResponse::default();
+        let address = H160::from_str("0x0300000000000000000000000000000000000000").unwrap();
+        proof.address = address;
+        let balance = "0x0000000000000000000000000000000000000000000000000000000000000009";
+        let nonce = 7u64;
+        proof.balance = ethers::types::U256::from_str(balance).unwrap();
+        proof.nonce = nonce.into();
+        state.proofs.insert(address, proof);
+
+        let retreived_account = state.get_account_info(&address.0.into()).unwrap();
+        let expected_account = AccountInfo {
+            balance: U256::from_str(balance).unwrap(),
+            nonce,
+            code_hash: B256::zero(),
+            code: None,
+        };
+        assert_eq!(retreived_account, expected_account);
+    }
 }
