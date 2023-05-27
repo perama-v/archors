@@ -122,8 +122,6 @@ impl BlockEvm {
     ///
     /// This applies the transaction, monitors the output and leaves the EVM ready for the
     /// next transaction to be added.
-    ///
-    ///
     pub fn execute_with_inspector_eip3155(&mut self) -> Result<ExecutionResult, EvmError> {
         self.tx_env_status.ready_to_execute()?;
         // Initialize the inspector
@@ -131,6 +129,16 @@ impl BlockEvm {
 
         // see: https://github.com/bluealloy/revm/blob/main/bins/revme/src/statetest/runner.rs#L259
         let outcome = self.evm.inspect_commit(inspector).map_err(EvmError::from)?;
+        self.tx_env_status.executed()?;
+        Ok(outcome)
+    }
+    /// Execute a loaded transaction without an inspector.
+    ///
+    /// This applies the transaction and leaves the EVM ready for the
+    /// next transaction to be added.
+    pub fn execute_without_inspector(&mut self) -> Result<ExecutionResult, EvmError> {
+        self.tx_env_status.ready_to_execute()?;
+        let outcome = self.evm.transact_commit().map_err(EvmError::from)?;
         self.tx_env_status.executed()?;
         Ok(outcome)
     }

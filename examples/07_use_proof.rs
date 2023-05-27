@@ -2,7 +2,7 @@ use anyhow::Result;
 use archors_inventory::cache::{
     get_block_from_cache, get_contracts_from_cache, get_proofs_from_cache,
 };
-use archors_tracer::{state::BlockProofsBasic, trace::trace_block};
+use archors_tracer::{state::BlockProofsBasic, trace::{ BlockExecutor}};
 
 /// Consume one block state proof.
 fn main() -> Result<()> {
@@ -19,6 +19,11 @@ fn main() -> Result<()> {
         proofs: required_state.proofs,
         code: required_code,
     };
-    trace_block(block, &state)?;
+    let executor = BlockExecutor::load(block, state)?;
+
+    // Either trace the full block or a single transaction of interest.
+    executor.trace_transaction(14)?;
+    //executor.trace_block()?;
+
     Ok(())
 }

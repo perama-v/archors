@@ -1,13 +1,13 @@
 //! For executing a block using state.
 
 use ethers::types::{Block, Transaction};
-use revm::primitives::U256;
+use revm::primitives::{ExecutionResult, U256};
 use thiserror::Error;
 
 use crate::{
     evm::{BlockEvm, EvmError},
     state::{build_state_from_proofs, CompleteAccounts, StateError},
-    utils::UtilsError,
+    utils::{hex_encode, UtilsError},
 };
 
 /// An error with tracing a block
@@ -19,42 +19,77 @@ pub enum TraceError {
     UtilsError(#[from] UtilsError),
     #[error("EvmError {0}")]
     EvmError(#[from] EvmError),
-    #[error("Unable to set transaction (index {index}) environment {source}")]
-    TxEnvError{source: EvmError, index: usize},
-    #[error("Unable to execute transaction (index {index}) {source}")]
-    TxExecutionError{source: EvmError, index: usize}
+    #[error("Unable to set transaction (tx_index {index}) environment {source}")]
+    TxEnvError { source: EvmError, index: usize },
+    #[error("Unable to execute transaction (tx_index {index}) {source}")]
+    TxExecutionError { source: EvmError, index: usize },
 }
 
-pub fn trace_block<T>(block: Block<Transaction>, block_proofs: &T) -> Result<(), TraceError>
-where
-    T: CompleteAccounts,
-{
-    // For all important states, load into db.
-    let cache_db = build_state_from_proofs(block_proofs)?;
+/// Holds an EVM configured for single block execution.
+pub struct BlockExecutor {
+    block_evm: BlockEvm,
+    block: Block<Transaction>,
+}
 
-    let mut block_evm = BlockEvm::init_from_db(cache_db);
-    block_evm
-        .add_chain_id(U256::from(1))
-        .add_spec_id(&block)? // TODO
-        .add_block_environment(&block)?;
+impl BlockExecutor {
+    /// Loads the tracer so that it is ready to trace a block.
+    pub fn load<T>(block: Block<Transaction>, block_proofs: T) -> Result<Self, TraceError>
+    where
+        T: CompleteAccounts,
+    {
+        // For all important states, load into db.
+        let cache_db = build_state_from_proofs(&block_proofs)?;
 
-    for (index, tx) in block.transactions.into_iter().enumerate() {
-        let outcome = block_evm
-            .add_transaction_environment(tx)
-            .map_err(|source| TraceError::TxEnvError{source, index})?
-            .execute_with_inspector_eip3155()
-            .map_err(|source| TraceError::TxExecutionError{source, index})?;
-
-        println!("\n\nTransaction {index}, outcome: {outcome:?}");
+        let mut block_evm = BlockEvm::init_from_db(cache_db);
+        block_evm
+            .add_chain_id(U256::from(1))
+            .add_spec_id(&block)? // TODO
+            .add_block_environment(&block)?;
+        Ok(BlockExecutor { block_evm, block })
     }
-
-    Ok(())
+    /// Traces a single transaction in the block.
+    ///
+    /// Preceeding transactions are executed but not traced.
+    pub fn trace_transaction(mut self, target_tx_index: usize) -> Result<(), TraceError> {
+        for (index, tx) in self.block.transactions.into_iter().enumerate() {
+            if index == target_tx_index {
+                // Execute with tracing.
+                let outcome = self
+                    .block_evm
+                    .add_transaction_environment(tx)
+                    .map_err(|source| TraceError::TxEnvError { source, index })?
+                    .execute_with_inspector_eip3155()
+                    .map_err(|source| TraceError::TxExecutionError { source, index })?;
+                // Ignore remaining transactions.
+                return Ok(());
+            }
+            // Execute without tracing.
+            let outcome = self
+                .block_evm
+                .add_transaction_environment(tx)
+                .map_err(|source| TraceError::TxEnvError { source, index })?
+                .execute_without_inspector()
+                .map_err(|source| TraceError::TxExecutionError { source, index })?;
+        }
+        Ok(())
+    }
+    /// Traces every transaction in the block.
+    pub fn trace_block(mut self) -> Result<(), TraceError> {
+        for (index, tx) in self.block.transactions.into_iter().enumerate() {
+            let outcome = self
+                .block_evm
+                .add_transaction_environment(tx)
+                .map_err(|source| TraceError::TxEnvError { source, index })?
+                .execute_with_inspector_eip3155()
+                .map_err(|source| TraceError::TxExecutionError { source, index })?;
+        }
+        Ok(())
+    }
 }
-
-
 
 #[cfg(test)]
 mod test {
+    use super::*;
     use std::{collections::HashMap, str::FromStr};
 
     use ethers::types::{EIP1186ProofResponse, H160};
@@ -65,7 +100,6 @@ mod test {
 
     use crate::state::BlockProofsBasic;
 
-    use super::*;
     /// Tests that a EVM environnment can be constructed from proof data for a block
     /// Values are set for an account, transactions are created and then
     /// applied by running the EVM.
@@ -101,7 +135,8 @@ mod test {
         .unwrap();
         block.transactions.push(tx);
         // Trace fails due to the failing transaction.
-        assert!(trace_block(block, &state).is_err());
+        let mut executor = BlockExecutor::load(block, state).unwrap();
+        assert!(executor.trace_block().is_err());
     }
 
     /// Test case from revm crate.
