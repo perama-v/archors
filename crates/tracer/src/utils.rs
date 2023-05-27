@@ -128,7 +128,7 @@ mod test {
 
     #[test]
     fn test_access_list_e_to_r() {
-        let address ="0x0000000000000000000000000000000000009876";
+        let address = "0x0000000000000000000000000000000000009876";
         let hash = "0x0000000000000000000000000000000000000000000000000000000000001234";
         let input: AccessList = AccessList(vec![AccessListItem {
             address: H160::from_str(address).unwrap(),
