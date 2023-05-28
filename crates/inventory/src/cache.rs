@@ -171,6 +171,22 @@ pub fn compress_deduplicated_state(target_block: u64) -> Result<(), CacheError> 
 ///
 /// This is effective because there are many nodes within the proofs that are
 /// common between proofs.
+///
+/// ## Effect
+/// State pre and post compression for different blocks:
+/// - 17190873 8.9MB to 6.4MB = -28%
+/// - 17193183 5.1MB to 3.4MB = -33%
+/// - 17193270 10.1MB to 7.8MB = -22%
+///
+/// Total size for the three blocks: 24.1MB to 17.6MB = -26%
+///
+/// ## Limitation
+/// Ultimately there are better ways to compress state because intermediate
+/// nodes (and contract code) may be repeated across proofs and a different
+/// storage representation would be better.
+///
+/// If compression is done on a per-block level then inter-block duplicates
+/// are not efficiently compressed.
 pub fn compress_proofs(target_block: u64) -> Result<(), CacheError> {
     let names = CacheFileNames::new(target_block);
     let block_file = names.prior_block_state_proofs();
