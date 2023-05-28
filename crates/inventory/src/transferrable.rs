@@ -17,19 +17,24 @@
 use ssz_rs::prelude::*;
 use thiserror::Error;
 
-use crate::ssz::{
-    constants::{
-        MAX_ACCOUNT_NODES_PER_BLOCK, MAX_ACCOUNT_PROOFS_PER_BLOCK, MAX_BYTES_PER_CONTRACT,
-        MAX_BYTES_PER_NODE, MAX_CONTRACTS_PER_BLOCK, MAX_NODES_PER_PROOF,
-        MAX_STORAGE_NODES_PER_BLOCK, MAX_STORAGE_PROOFS_PER_ACCOUNT,
+use crate::{
+    ssz::{
+        constants::{
+            MAX_ACCOUNT_NODES_PER_BLOCK, MAX_ACCOUNT_PROOFS_PER_BLOCK, MAX_BYTES_PER_CONTRACT,
+            MAX_BYTES_PER_NODE, MAX_CONTRACTS_PER_BLOCK, MAX_NODES_PER_PROOF,
+            MAX_STORAGE_NODES_PER_BLOCK, MAX_STORAGE_PROOFS_PER_ACCOUNT,
+        },
+        types::{SszH160, SszH256, SszU256, SszU64},
     },
-    types::{SszH160, SszH256, SszU256, SszU64},
+    utils::{compress, UtilsError},
 };
 
 #[derive(Debug, Error)]
 pub enum TransferrableError {
-    #[error("TODO")]
-    Todo,
+    #[error("SSZ Error {0}")]
+    SszError(#[from] SerializeError),
+    #[error("Utils error {0}")]
+    UtilsError(#[from] UtilsError),
 }
 
 /// State that has items referred to by their hash. This store represents the minimum
@@ -50,19 +55,6 @@ pub struct SlimBlockStateProof {
     contracts: List<Contract, MAX_CONTRACTS_PER_BLOCK>,
     account_nodes: List<TrieNode, MAX_ACCOUNT_NODES_PER_BLOCK>,
     storage_nodes: List<TrieNode, MAX_STORAGE_NODES_PER_BLOCK>,
-}
-
-impl SlimBlockStateProof {
-    fn create() -> Result<Self, TransferrableError> {
-        
-
-        Ok(SlimBlockStateProof {
-            slim_eip1186_proof: todo!(),
-            contracts: todo!(),
-            account_nodes: todo!(),
-            storage_nodes: todo!(),
-        })
-    }
 }
 
 /// RLP-encoded Merkle PATRICIA Trie node.
@@ -103,3 +95,21 @@ pub struct SlimStorageProof {
 /// The purpose is deduplication as some nodes appear in different proofs within
 /// the same block.
 pub type NodeIndices = List<u16, MAX_NODES_PER_PROOF>;
+
+impl SlimBlockStateProof {
+    pub fn create() -> Result<Self, TransferrableError> {
+        let proof = SlimBlockStateProof {
+            slim_eip1186_proof: todo!(),
+            contracts: todo!(),
+            account_nodes: todo!(),
+            storage_nodes: todo!(),
+        };
+        Ok(proof)
+    }
+    pub fn to_ssz_snappy_bytes(self) -> Result<Vec<u8>, TransferrableError> {
+        let mut buf = vec![];
+        let _bytes_written_len = self.serialize(&mut buf)?;
+        let compressed = compress(buf)?;
+        Ok(compressed)
+    }
+}

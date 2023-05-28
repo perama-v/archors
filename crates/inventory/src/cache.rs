@@ -11,6 +11,7 @@ use ethers::{
     utils::keccak256,
 };
 use reqwest::Client;
+use ssz_rs::Serialize;
 use thiserror::Error;
 use url::{ParseError, Url};
 
@@ -19,6 +20,7 @@ use crate::{
         debug_trace_block_prestate, eth_get_proof, get_block_by_number, AccountProofResponse,
         BlockPrestateInnerTx, BlockPrestateResponse, BlockResponse,
     },
+    transferrable::{SlimBlockStateProof, TransferrableError},
     types::{BlockProofs, BlockStateAccesses},
     utils::{compress, hex_decode, UtilsError},
 };
@@ -35,6 +37,8 @@ pub enum CacheError {
     IoError(#[from] io::Error),
     #[error("serde_json error {0}")]
     SerdeJsonError(#[from] serde_json::Error),
+    #[error("Transferrable error {0}")]
+    TransferrableError(#[from] TransferrableError),
     #[error("Url error {0}")]
     UrlError(#[from] ParseError),
     #[error("Utils error {0}")]
@@ -197,6 +201,20 @@ pub fn compress_proofs(target_block: u64) -> Result<(), CacheError> {
     Ok(())
 }
 
+/// Retrieves all state data required for a block and creates and stores
+/// an SSZ+snappy encoded format redy for P2P transfer.
+pub fn create_transferrable_proof(target_block: u64) -> Result<(), CacheError> {
+    let proofs = get_proofs_from_cache(target_block)?;
+    let contracts = get_contracts_from_cache(target_block)?;
+
+    let names = CacheFileNames::new(target_block);
+    let transferrable = SlimBlockStateProof::create()?;
+    let bytes = transferrable.to_ssz_snappy_bytes()?;
+    let mut file = File::create(names.prior_block_transferrable_state_proofs())?;
+    file.write_all(&bytes)?;
+    Ok(())
+}
+
 /// Retrieves the accessed-state proofs for a single block from cache.
 pub fn get_proofs_from_cache(block: u64) -> Result<BlockProofs, CacheError> {
     let proof_cache_path = CacheFileNames::new(block).prior_block_state_proofs();
@@ -262,6 +280,10 @@ impl CacheFileNames {
     }
     fn prior_block_state_proofs_compressed(&self) -> PathBuf {
         self.dirname().join("prior_block_state_proofs.snappy")
+    }
+    fn prior_block_transferrable_state_proofs(&self) -> PathBuf {
+        self.dirname()
+            .join("prior_block_transferrable_state_proofs.ssz_snappy")
     }
     fn block_with_transactions(&self) -> PathBuf {
         self.dirname().join("block_with_transactions.json")
