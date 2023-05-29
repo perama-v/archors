@@ -11,7 +11,6 @@ use ethers::{
     utils::keccak256,
 };
 use reqwest::Client;
-use ssz_rs::Serialize;
 use thiserror::Error;
 use url::{ParseError, Url};
 
@@ -208,7 +207,8 @@ pub fn create_transferrable_proof(target_block: u64) -> Result<(), CacheError> {
     let contracts = get_contracts_from_cache(target_block)?;
 
     let names = CacheFileNames::new(target_block);
-    let transferrable = SlimBlockStateProof::create()?;
+
+    let transferrable = SlimBlockStateProof::create(proofs, contracts.into_values().collect())?;
     let bytes = transferrable.to_ssz_snappy_bytes()?;
     let mut file = File::create(names.prior_block_transferrable_state_proofs())?;
     file.write_all(&bytes)?;
@@ -233,8 +233,10 @@ pub fn get_block_from_cache(block: u64) -> Result<Block<Transaction>, CacheError
     Ok(block)
 }
 
+pub(crate) type ContractBytes = Vec<u8>;
+
 /// Retrieves the contract code for a particular cached block.
-pub fn get_contracts_from_cache(block: u64) -> Result<HashMap<H256, Vec<u8>>, CacheError> {
+pub fn get_contracts_from_cache(block: u64) -> Result<HashMap<H256, ContractBytes>, CacheError> {
     let block_state_path = CacheFileNames::new(block).block_accessed_state_deduplicated();
     let file = File::open(block_state_path)?;
     let reader = BufReader::new(file);

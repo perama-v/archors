@@ -1,13 +1,13 @@
 //! For executing a block using state.
 
 use ethers::types::{Block, Transaction};
-use revm::primitives::{ U256};
+use revm::primitives::U256;
 use thiserror::Error;
 
 use crate::{
     evm::{BlockEvm, EvmError},
     state::{build_state_from_proofs, CompleteAccounts, StateError},
-    utils::{ UtilsError},
+    utils::UtilsError,
 };
 
 /// An error with tracing a block
