@@ -10,7 +10,7 @@ fn main() -> Result<()> {
 
     // In block 17190873, one account proof node is repeated 162 times.
     // Representing state as .snappy can improve the footprint.
-    compress_proofs(17190873)?;
+    // compress_proofs(17190873)?;
 
     // Package block state proof into a ssz format with minimal duplication of
     // data, optimised for transfer to a peer.
