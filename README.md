@@ -2,6 +2,8 @@
 
 **arch**ival sciss**ors**: A tool for single Ethereum archival block state proofs.
 
+Research question: Can you build a static data format for a sharded archive node?
+
 ## Why
 
 To send a single historical block (as an historical state proof) to a peer and have
@@ -185,9 +187,10 @@ This for example could equate to a network with:
 |-|-|-|-|
 |1|50TB|100TB|500TB|
 |100|500GB|1TB|5TB|
-|1000|50GB|**~100GB~**|500GB|
+|1000|50GB|**-> 100GB <-**|500GB|
 |10000|5GB|10GB|50GB|
 
+Which is to say  archive node that is ~1/10th the size of a
 
 ### Additional compression
 
