@@ -145,47 +145,48 @@ sequenceDiagram
 The proof sent to a peer is a proof of all accessed accounts, and for each account
 a proof for each accessed storage slot is included.
 
-## State and proof data propoerties
+## State and proof data properties
 
 A sample (`./data/blocks/17190873`) is prepared using the examples, which
-call a node and cache the results for testing.
+calls a node and caches the results. The data directory holds a lot of intermediate
+data for testing.
 
-The cache has the following properties:
-- 17KB block_with_transactions.json
-    - TODO: Include transaction calldata by setting eth_getBlockByNumber flag to true.
-- 13.1MB block_prestate_trace.json (don't need)
-    - 4.4MB block_accessed_state_deduplicated.json
-        - 1.6MB block_accessed_state_deduplicated.snappy
-- 6.4MB block_state_proofs.json
-    - 4.3MB block_state_proofs.json
+The transferrable proof file (`./data/blocks/17190873/prior_block_transferrable_state_proofs.ssz_snappy`)
+is the most important. It is an SSZ + snappy encoded representation of all the data required
+to trace a block trustlessly. This includes contract code, account state values, storage state values and their respective merkle proofs.
 
-Hence, in order to fully trace block `17190873` the data is:
-- 17KB Transactions
-- 1.6MB State
-- 4.3MB Proofs
+Components required to trace the block:
+- Block header confidence (header accumulator)
+- `eth_getBlockByNumber` with flag transactions=`true`
+- transferrable ssz snappy proof file.
 
-Total: ~6MB
+Transferrable refers to this being a payload that could be transferred to a peer.
 
-There is still some duplication here, with some state values existing in the State
-and Proof files. However, this will be a small value. Hence, the total size for the
-data that needs to be sent to a peer for this particular block is approximately 6MB.
+### Size
+How big is this transferrable
 
-|Block|MGas|Txs|Internal Txs|State Values|State Proof|Total P2P payload|
-|-|-|-|-|-|-|-|
-|17190873|29|200|217|1.6 MB| 4.3 MB|5.9 MB|
-|17193183|17|100|42|0.7 MB|2.6 MB|3.3 MB|
-|17193270|23|395|97|1.4 MB|4.6 MB|5.9 MB|
+|Block|MGas|Txs|Internal Txs|Total P2P payload|
+|-|-|-|-|-|
+|17190873|29|200|217|3.3 MB|
+|17193183|17|100|42|1.6 MB|
+|17193270|23|395|97|3.8 MB|
 
-This is too small a sample to extrapolate from, but I will do exactly that:
-The total blockchain 1.7e7 * 5 MB = 8.5e7 MB = 8.5e4 GB = 8.5e1 TB = 85 TB.
+This is too small a sample to extrapolate from, but I will do exactly that
+and use the average (2.9MB).
+```
+17 million blocks * 2.9 MB per block ~= 50 TB.
+```
+This for example could equate to a network with:
+- replication of data 2x for redundancy
+- 1000 nodes
+- 100GB nodes
 
-With 100 nodes: 8.5 TB
-|Nodes|Node size (replication=1)| Node size (replication = 10)|
-|-|-|-|
-|1|85TB|850TB|
-|100|850GB|8.5TB|
-|1000|85GB|850GB|
-|10000|8.5GB|85GB|
+|Nodes|Node size (replication = 1)| Node size (replication = 2)| Node size (replication = 10)|
+|-|-|-|-|
+|1|50TB|100TB|500TB|
+|100|500GB|1TB|5TB|
+|1000|50GB|**~100GB~**|500GB|
+|10000|5GB|10GB|50GB|
 
 
 ### Additional compression
@@ -215,7 +216,7 @@ program counters 2080, 8672, 17898. One could create a parser that:
 {
   "pc": 2080,
   "op": 253,
-  "gas": "0x85044",
+  "gas": "0x50044",
   "gasCost": "0x0",
   "memSize": 256,
   "stack": [
@@ -250,7 +251,7 @@ program counters 2080, 8672, 17898. One could create a parser that:
     "0xa4",
     "0x0",
     "0x29f2360d4550f0ab",
-    "0x10878fe6d285800",
+    "0x10878fe6d250800",
     "0x0",
     "0x0",
     "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
@@ -283,7 +284,7 @@ program counters 2080, 8672, 17898. One could create a parser that:
     "0x1787586c4fa8a01c71c7",
     "0xe0",
     "0x1787586c4fa8a01c71c7",
-    "0x251b",
+    "0x250b",
     "0xe0",
     "0x2ba",
     "0x53ae61d9e66d03d90a13bbb16b69187037c90f0d",
