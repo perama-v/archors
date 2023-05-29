@@ -2,8 +2,6 @@
 
 **arch**ival sciss**ors**: A tool for single Ethereum archival block state proofs.
 
-Research question: Can you build a static data format for a sharded archive node?
-
 ## Why
 
 To send a single historical block (as an historical state proof) to a peer and have
@@ -21,6 +19,16 @@ that serves `eth_getProof`. Then the actual historical state at each block can b
 A proof plus a block body allows isolated single block trace. That is, every EVM operation
 can be replayed and inspected - without needing the rest of the chain. Nodes can store
 subsets of the data and remain functional and trustless.
+
+## Research questions
+
+- Can you build a static data format for a sharded archive node?
+    - Yes, composed of proofs specified with ssz types with deduplicated contract code and trie nodes.
+- How much data needs to go over the wire to a peer who has a block with transactions,
+but wants to now run `debug_TraceTransaction` without trusting some authority?
+    - Maybe ~3MB on average
+- How big might an average sharded archive node need to be?
+    - Maybe 100GB
 
 ## Status
 
