@@ -173,7 +173,7 @@ Components required to trace the block:
 
 Transferrable refers to this being a payload that could be transferred to a peer.
 
-### Size
+### Disk size
 How big is this transferrable
 
 |Block|MGas|Txs|Internal Txs|Total P2P payload|
@@ -249,6 +249,19 @@ A different example:
 Peers store blocks in a random distribution, so they will not be continuous. This decreases
 the chance that there are similar trie nodes between the blocks. These blocks are 50 blocks
 apart, which is to be expected for a node holding ~2% of network data.
+
+### Lower state burden in history
+
+The above calculations are from blocks in 17.3M range. Daily gas used is likely
+proportional to state accesses. As a rough estimate, one can divide the chain history
+into two halves, where the older half used ~25% the gas of the newer half.
+
+This may mean that there is in practice a ~38% (.75 * .5) reduction in the total estimates from above. So a 100GB node estimate might be closer to 63GB.
+
+### Verkle transition
+
+The size of the proof data will drop significantly if/when verkle tries are used.
+However this will only apply to anterograde (post-verkle-fork) blocks.
 
 ## Trace data
 
