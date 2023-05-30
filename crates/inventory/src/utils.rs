@@ -50,6 +50,20 @@ pub fn compress(ssz_bytes: Vec<u8>) -> Result<Vec<u8>, UtilsError> {
     Ok(buffer)
 }
 
+/// Performs snappy decompression on bytes.
+///
+/// Takes ssz_snappy bytes, returns ssz bytes.
+pub fn decompress(ssz_snappy_bytes: Vec<u8>) -> Result<Vec<u8>, UtilsError> {
+    /*
+    Raw decoder (no frames):
+    let mut snap_decoder = snap::raw::Decoder::new();
+    let decompressed_vec = snap_decoder.decompress_vec(ssz_snappy_bytes.as_slice())?;
+    */
+    let mut buffer = vec![];
+    snap::read::FrameDecoder::new(ssz_snappy_bytes.as_slice()).read_to_end(&mut buffer)?;
+    Ok(buffer)
+}
+
 /// Convert ethers H256 to SSZ equivalent.
 pub fn h256_to_ssz_h256(input: H256) -> Result<SszH256, UtilsError> {
     Ok(SszH256::try_from(input.0.to_vec()).map_err(|e| e.1)?)
