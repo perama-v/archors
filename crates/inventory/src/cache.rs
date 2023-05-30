@@ -224,6 +224,14 @@ pub fn get_proofs_from_cache(block: u64) -> Result<BlockProofs, CacheError> {
     Ok(block_proofs)
 }
 
+/// Retrieves the transferrable (ssz+snappy) proofs for a single block from cache.
+pub fn get_transferrable_proofs_from_cache(block: u64) -> Result<SlimBlockStateProof, CacheError> {
+    let proof_cache_path = CacheFileNames::new(block).prior_block_transferrable_state_proofs();
+    let data = fs::read(proof_cache_path)?;
+    let block_proofs = SlimBlockStateProof::from_ssz_snappy_bytes(data)?;
+    Ok(block_proofs)
+}
+
 /// Retrieves a single block that has been stored.
 pub fn get_block_from_cache(block: u64) -> Result<Block<Transaction>, CacheError> {
     let block_cache_path = CacheFileNames::new(block).block_with_transactions();

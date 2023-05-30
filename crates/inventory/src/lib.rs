@@ -1,4 +1,5 @@
 pub mod cache;
+pub mod overlap;
 pub mod rpc;
 pub mod ssz;
 pub mod transferrable;

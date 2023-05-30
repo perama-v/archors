@@ -33,13 +33,15 @@ use crate::{
     },
     types::BlockProofs,
     utils::{
-        compress, h160_to_ssz_h160, h256_to_ssz_h256, u256_to_ssz_u256, u64_to_ssz_u64,
+        compress, decompress, h160_to_ssz_h160, h256_to_ssz_h256, u256_to_ssz_u256, u64_to_ssz_u64,
         usize_to_u16, UtilsError,
     },
 };
 
 #[derive(Debug, Error)]
 pub enum TransferrableError {
+    #[error("Derialize Error {0}")]
+    DerializeError(#[from] ssz_rs::DeserializeError),
     #[error("SSZ Error {0}")]
     SszError(#[from] SerializeError),
     #[error("SimpleSerialize Error {0}")]
@@ -50,24 +52,26 @@ pub enum TransferrableError {
     NoIndexForNode,
 }
 
-/// State that has items referred to by their hash. This store represents the minimum
+/// State that has items referred to using indices to deduplicate data.
+///
+/// This store represents the minimum
 /// set of information that a peer should send to enable a block holder (eth_getBlockByNumber)
 /// to trace the block.
 ///
 /// Consists of:
 /// - A collection of EIP-1186 style proofs with intermediate nodes referred to in a separate list.
 /// EIP-1186 proofs consist of:
-///     - address, balance, codehash, nonce, storagehash, accountproofnodehashes, storageproofs
-///         - storageproofs: key, value, storageproofnodehashes
-/// - contract code referred to by codehash.
-/// - account trie node referred to by nodehash
-/// - storage trie node referred to by nodehash
+///     - address, balance, codehash, nonce, storagehash, accountproofnodeindices, storageproofs
+///         - storageproofs: key, value, storageproofnodeindices
+/// - contract code.
+/// - account trie node.
+/// - storage trie node.
 #[derive(PartialEq, Eq, Debug, Default, SimpleSerialize)]
 pub struct SlimBlockStateProof {
-    slim_eip1186_proofs: SlimEip1186Proofs,
-    contracts: Contracts,
-    account_nodes: AccountNodes,
-    storage_nodes: StorageNodes,
+    pub slim_eip1186_proofs: SlimEip1186Proofs,
+    pub contracts: Contracts,
+    pub account_nodes: AccountNodes,
+    pub storage_nodes: StorageNodes,
 }
 
 pub type SlimEip1186Proofs = List<SlimEip1186Proof, MAX_ACCOUNT_PROOFS_PER_BLOCK>;
@@ -135,10 +139,13 @@ impl SlimBlockStateProof {
         let ssz_kb = self.serialize(&mut buf)? / 1000;
         let compressed = compress(buf)?;
         let snappy_kb = compressed.len() / 1000;
-        println!(
-            "SSZ data compressed from {ssz_kb}KB to {snappy_kb}KB"
-        );
+        println!("SSZ data compressed from {ssz_kb}KB to {snappy_kb}KB");
         Ok(compressed)
+    }
+    pub fn from_ssz_snappy_bytes(snappy_data: Vec<u8>) -> Result<Self, TransferrableError> {
+        let data = decompress(snappy_data)?;
+        let proofs = self::deserialize(&data)?;
+        Ok(proofs)
     }
 }
 
