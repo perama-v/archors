@@ -182,7 +182,7 @@ How big is this transferrable
 |17193183|17|100|42|1.6 MB|
 |17193270|23|395|97|3.8 MB|
 
-This is too small a sample to extrapolate from, but I will do exactly that
+Let's extrapolate from these 3 blocks (it is an overestimation, see data below)
 and use the average (2.9MB).
 ```
 17 million blocks * 2.9 MB per block ~= 50 TB.
@@ -219,9 +219,36 @@ each new proof received.
 
 Source: inter-proof-overlap example.
 
+A different example:
+- 20 blocks, 50 blocks apart.
+- ssz proof stats: min 2.1MB, average 2.9MB, max 4.0MB, sum 57MB
+- ssz_snappy Proof stats: min 1.7MB, max 3.5MB, average 2.3MB
+- Total saved from repeated elements between blocks, attribution:
+    - Contracts 12MB
+    - Account nodes 0.8MB
+    - Storage nodes 1.6MB
+    - Savings = 14MB (26% of total for contracts/nodes)
+- Marginal savings for additional blocks: see table below
+- Total disk: 57MB - 14MB = 43MB
+- Average disk size per proof after deduplication: ~= 2.1MB
+
+|block proof received| proofs stored |percentage savings|
+|-|-|-|
+|17370025|1|0%|
+|17370075|2|7%|
+|17370125|3|11%|
+|17370175|4|14%|
+|17370225|5|16%|
+||...||
+|17370475|10|22%|
+||...||
+|17370725|15|24%|
+||...||
+|17370975|20|26%|
+
 Peers store blocks in a random distribution, so they will not be continuous. This decreases
-the chance that there are similar trie nodes between the blocks. These blocks are > 100 blocks
-apart, which is to be expected for a node holding <1% of network data.
+the chance that there are similar trie nodes between the blocks. These blocks are 50 blocks
+apart, which is to be expected for a node holding ~2% of network data.
 
 ## Trace data
 
