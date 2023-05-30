@@ -45,8 +45,9 @@ node must provide both:
 |-|-|-|
 |1, 2, 3|inventory|obtain and cache block data from a node|
 |4, 5|inventory|create merkle proof for block state|
-|6|verify|verify merkle proof for block|
-|7|tracer|locally produce `debug_traceTransaction` / `debug_traceBlock` using proof data|
+|6|inventory|measure data overlap between proofs for different blocks|
+|7|verify|verify merkle proof for block|
+|8|tracer|locally produce `debug_traceTransaction` / `debug_traceBlock` using proof data|
 
 ## Use case
 
@@ -200,11 +201,27 @@ This for example could equate to a network with:
 
 Which is to say  archive node that is ~1/10th the size of a
 
-### Additional compression
+### Deduplication on the disk of a peer
 
 It is noted that contract data and merkle tree nodes are common amongst different blocks.
-This represents compressible data for a single node. The prevalence of these occurrences
-and therefore the amount of additional compression available is unknown.
+This represents compressible data for a single node.
+
+Of the large data items (contract code, merkle trie nodes), the percentage saving for
+different blocks can be calculated. As a node store more blocks, frequently encountered nodes
+will become a larger share of the data. Hence, the marginal data to store goes down with
+each new proof received.
+
+|block proof received| proofs stored |percentage savings|
+|-|-|-|
+|17190873|1|0%|
+|17193183|2|5%|
+|17193270|3|10%|
+
+Source: inter-proof-overlap example.
+
+Peers store blocks in a random distribution, so they will not be continuous. This decreases
+the chance that there are similar trie nodes between the blocks. These blocks are > 100 blocks
+apart, which is to be expected for a node holding <1% of network data.
 
 ## Trace data
 
