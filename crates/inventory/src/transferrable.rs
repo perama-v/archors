@@ -134,6 +134,11 @@ impl SlimBlockStateProof {
         };
         Ok(proof)
     }
+    pub fn to_ssz_bytes(self) -> Result<Vec<u8>, TransferrableError> {
+        let mut buf = vec![];
+        let _ssz_bytes_len = self.serialize(&mut buf)?;
+        Ok(buf)
+    }
     pub fn to_ssz_snappy_bytes(self) -> Result<Vec<u8>, TransferrableError> {
         let mut buf = vec![];
         let ssz_kb = self.serialize(&mut buf)? / 1000;
@@ -141,6 +146,10 @@ impl SlimBlockStateProof {
         let snappy_kb = compressed.len() / 1000;
         println!("SSZ data compressed from {ssz_kb}KB to {snappy_kb}KB");
         Ok(compressed)
+    }
+    pub fn from_ssz_bytes(ssz_data: Vec<u8>) -> Result<Self, TransferrableError> {
+        let proofs = self::deserialize(&ssz_data)?;
+        Ok(proofs)
     }
     pub fn from_ssz_snappy_bytes(snappy_data: Vec<u8>) -> Result<Self, TransferrableError> {
         let data = decompress(snappy_data)?;
