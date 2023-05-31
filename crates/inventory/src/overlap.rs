@@ -25,17 +25,29 @@ pub struct DataSaved {
 
 impl Display for DataSaved {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let savings = self.contracts + self.accounts + self.storage;
-        let naive_sum = self.nodes_and_contracts_to_store + savings;
-        let percentage_savings = 100 * savings / naive_sum;
         write!(
             f,
             "Overlap: Contracts {}KB, Account nodes {}KB, Storage nodes {}KB. Savings {}%",
             self.contracts / 1000,
             self.accounts / 1000,
             self.storage / 1000,
-            percentage_savings,
+            self.percentage_savings(),
         )
+    }
+}
+
+impl DataSaved {
+    /// Percentage of code and nodes data that does not need to be stored twice
+    /// due to overlap between blocks.
+    pub fn percentage_savings(&self) -> usize {
+        let savings = self.contracts + self.accounts + self.storage;
+        let naive_sum = self.nodes_and_contracts_to_store + savings;
+        100 * savings / naive_sum
+    }
+    /// Bytes saved byt not duplicating repeated code and account/storage nodes
+    /// between different blocks.
+    pub fn total_savings(&self) -> usize {
+        self.contracts + self.accounts + self.storage
     }
 }
 
