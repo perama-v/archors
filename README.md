@@ -26,7 +26,10 @@ subsets of the data and remain functional and trustless.
     - Yes, composed of proofs specified with ssz types with deduplicated contract code and trie nodes.
 - How much data needs to go over the wire to a peer who has a block with transactions,
 but wants to now run `debug_TraceTransaction` without trusting some authority?
-    - Maybe ~3MB on average
+    - ~167 kb/Mgas
+- How much data needs to be stored on disk for a node holding the proofs for a collection of
+noncontiguous blocks (that they can send to peers):
+    - ~155 kb/Mgas
 - How big might an average sharded archive node need to be?
     - Maybe 100GB
 
@@ -173,35 +176,15 @@ Components required to trace the block:
 
 Transferrable refers to this being a payload that could be transferred to a peer.
 
-### Disk size
-How big is this transferrable
-
-|Block|MGas|Txs|Internal Txs|Total P2P payload|
-|-|-|-|-|-|
-|17190873|29|200|217|3.3 MB|
-|17193183|17|100|42|1.6 MB|
-|17193270|23|395|97|3.8 MB|
-
-Let's extrapolate from these 3 blocks (it is an overestimation, see data below)
-and use the average (2.9MB).
-```
-17 million blocks * 2.9 MB per block ~= 50 TB.
-```
-This for example could equate to a network with:
-- replication of data 2x for redundancy
-- 1000 nodes
-- 100GB nodes
-
-|Nodes|Node size (replication = 1)| Node size (replication = 2)| Node size (replication = 10)|
-|-|-|-|-|
-|1|50TB|100TB|500TB|
-|100|500GB|1TB|5TB|
-|1000|50GB|**-> 100GB <-**|500GB|
-|10000|5GB|10GB|50GB|
-
-Which is to say  archive node that is ~1/10th the size of a
-
 ### Deduplication on the disk of a peer
+
+Here are the properties of the blocks used in the examples directory.
+
+|Block|MGas|Txs|Internal Txs|Total P2P payload|Payload per gas|
+|-|-|-|-|-|-|
+|17190873|29|200|217|3.3 MB|113 KB/Mgas
+|17193183|17|100|42|1.6 MB|94 KB/Mgas
+|17193270|23|395|97|3.8 MB|165 KB/Mgas
 
 It is noted that contract data and merkle tree nodes are common amongst different blocks.
 This represents compressible data for a single node.
@@ -219,7 +202,7 @@ each new proof received.
 
 Source: inter-proof-overlap example.
 
-A different example:
+Here is a larger data set (data has not uploaded to the ./data directory):
 - 20 blocks, 50 blocks apart.
 - ssz proof stats: min 2.1MB, average 2.9MB, max 4.0MB, sum 57MB
 - ssz_snappy Proof stats: min 1.7MB, max 3.5MB, average 2.3MB
@@ -232,19 +215,33 @@ A different example:
 - Total disk: 57MB - 14MB = 43MB
 - Average disk size per proof after deduplication: ~= 2.1MB
 
-|block proof received| proofs stored |percentage savings|
-|-|-|-|
-|17370025|1|0%|
-|17370075|2|7%|
-|17370125|3|11%|
-|17370175|4|14%|
-|17370225|5|16%|
-||...||
-|17370475|10|22%|
-||...||
-|17370725|15|24%|
-||...||
-|17370975|20|26%|
+|block number|block gas|block .ssz_snappy p2p wire|block wire per gas|block .ssz disk| block disk per gas|block count|cumulative sum duplicate discardable data|percentage disk saved
+|-|-|-|-|-|-|-|-|-|
+|17370025|13 Mgas|2269 kB|170 KB/Mgas|2918 KB|219 KB/Mgas|1|0 kB|0%|
+|17370075|11 Mgas|1698 kB|143 KB/Mgas|2136 KB|180 KB/Mgas|2|337 kB|6%|
+|17370125|16 Mgas|2418 kB|146 KB/Mgas|3086 KB|186 KB/Mgas|3|863 kB|10%|
+|17370175|11 Mgas|2389 kB|208 KB/Mgas|2992 KB|261 KB/Mgas|4|1564 kB|14%|
+|17370225|13 Mgas|2074 kB|154 KB/Mgas|2622 KB|195 KB/Mgas|5|2102 kB|15%|
+|17370275|22 Mgas|2610 kB|115 KB/Mgas|3255 KB|143 KB/Mgas|6|2891 kB|16%|
+|17370325|10 Mgas|1940 kB|190 KB/Mgas|2538 KB|248 KB/Mgas|7|3751 kB|19%|
+|17370375|19 Mgas|2023 kB|103 KB/Mgas|2636 KB|135 KB/Mgas|8|4577 kB|20%|
+|17370425|9 Mgas|1684 kB|181 KB/Mgas|2160 KB|232 KB/Mgas|9|5270 kB|21%|
+|17370475|15 Mgas|3461 kB|221 KB/Mgas|4082 KB|261 KB/Mgas|10|6056 kB|21%|
+|17370525|15 Mgas|2603 kB|169 KB/Mgas|3294 KB|214 KB/Mgas|11|7057 kB|22%|
+|17370575|18 Mgas|2851 kB|151 KB/Mgas|3396 KB|180 KB/Mgas|12|7740 kB|22%|
+|17370625|14 Mgas|2545 kB|180 KB/Mgas|3214 KB|227 KB/Mgas|13|8652 kB|22%|
+|17370675|12 Mgas|2282 kB|181 KB/Mgas|2913 KB|231 KB/Mgas|14|9513 kB|23%|
+|17370725|9 Mgas|1924 kB|197 KB/Mgas|2588 KB|266 KB/Mgas|15|10121 kB|23%|
+|17370775|9 Mgas|1763 kB|178 KB/Mgas|2273 KB|229 KB/Mgas|16|10766 kB|23%|
+|17370825|13 Mgas|2194 kB|168 KB/Mgas|2810 KB|215 KB/Mgas|17|11538 kB|23%|
+|17370875|14 Mgas|2249 kB|154 KB/Mgas|2841 KB|195 KB/Mgas|18|12354 kB|23%|
+|17370925|13 Mgas|2086 kB|158 KB/Mgas|2727 KB|207 KB/Mgas|19|13414 kB|24%|
+|17370975|11 Mgas|2294 kB|191 KB/Mgas|2942 KB|245 KB/Mgas|20|14467 kB|25%|
+
+Averages for a single block:
+- disk: 155 KB/Mgas
+    - This is with the duplicate contract code and account/storage nodes removed.
+- wire: 167 KB/Mgas
 
 Peers store blocks in a random distribution, so they will not be continuous. This decreases
 the chance that there are similar trie nodes between the blocks. These blocks are 50 blocks
@@ -252,11 +249,49 @@ apart, which is to be expected for a node holding ~2% of network data.
 
 ### Lower state burden in history
 
-The above calculations are from blocks in 17.3M range. Daily gas used is likely
-proportional to state accesses. As a rough estimate, one can divide the chain history
-into two halves, where the older half used ~25% the gas of the newer half.
+Gas used for old blocks is lower. Let's estimate the total disk required to hold the proofs
+for the whole chain, using the 155kb/Mgas (155MB/Bgas, 0.155Gb/Bgas, .155TB/Tgas) value from above. Daily gas estimates are made from eyeballing a daily gas used chart.
 
-This may mean that there is in practice a ~38% (.75 * .5) reduction in the total estimates from above. So a 100GB node estimate might be closer to 63GB.
+|year|average gas per day|gas for that year|disk for that year|
+|-|-|-|-|
+|2016|3 Bgas/day|1.1 Tgas|0.2 TB|
+|2017|10 Bgas/day|3.7 Tgas|0.5 TB|
+|2018|40 Bgas/day|15 Tgas|2.3 TB|
+|2019|40 Bgas/day|15 Tgas|2.3 TB|
+|2020|70 Bgas/day|26 Tgas|4.0 TB|
+|2021|90 Bgas/day|33 Tgas|5.1 TB|
+|2022|100 Bgas/day|37 Tgas|5.7 TB|
+|2023|110 Bgas/day|40 Tgas|6.2 TB|
+
+Total: 26 TB
+
+### Node disk size
+
+Let's say 30TB as a round estimate for the total proof size for mainnet (to block 17.3M).
+
+A network hosting this data must replicate this data for resilience. So every block proof
+must be present not 1, but 2, 3, ... 10? times. That replication factor is tunable and
+so are the number of nodes in the network.
+
+|Nodes|Node size (replication = 1)| Node size (replication = 2)| Node size (replication = 10)|
+|-|-|-|-|
+|1|30TB|60TB|300TB|
+|100|300GB|600GB|3TB|
+|1000|30GB|**-> 60GB <-**|300GB|
+|10000|3GB|6GB|30GB|
+
+The highlighted 60GB value indicates a network where:
+- 1000 nodes exist
+- Each proof is present present twice
+- Nodes must therefore hold 60GB.
+
+Which compared to other archive node setups:
+- Less optimised: 10TB
+- Optimised: 2TB (Erigon present)
+- Theoretical target: 1TB (Erigon future)
+
+Which is to say a user has access to a P2P node with `debug_traceTransaction` capabilities
+at less than 10% of disk size of alternatives.
 
 ### Verkle transition
 
