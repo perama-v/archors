@@ -49,8 +49,9 @@ node must provide both:
 |1, 2, 3|inventory|obtain and cache block data from a node|
 |4, 5|inventory|create merkle proof for block state|
 |6|inventory|measure data overlap between proofs for different blocks|
-|7|verify|verify merkle proof for block|
-|8|tracer|locally produce `debug_traceTransaction` / `debug_traceBlock` using proof data|
+|7|inventory|collect stats on bytes/gas for proofs|
+|8|verify|verify merkle proof for block|
+|9|tracer|locally produce `debug_traceTransaction` / `debug_traceBlock` using proof data|
 
 ## Use case
 
