@@ -4,7 +4,7 @@ use archors_tracer::trace::BlockExecutor;
 
 /// Consume one block state proof.
 fn main() -> Result<()> {
-    let block_number = 17190873;
+    let block_number = 17193183;
     // Get block to execute (eth_getBlockByNumber).
     let block = get_block_from_cache(block_number)?;
 
@@ -14,18 +14,7 @@ fn main() -> Result<()> {
     let executor = BlockExecutor::load(block, state)?;
 
     // Either trace the full block or a single transaction of interest.
-    /*
-    Notable transactions for block: 17190873
-    - 2,
-    - 14: Failed swap
-    - 28: Failed contract execution
-    - 37: Failed contract execution
-    - 95: Coinbase using multiple CALL to send ether to EOAs.
-    - 185: CREATEs 5 contracts
-    - 196, 204,
-    - 205 simple transfer (final tx)
-    */
-    //executor.trace_transaction(95)?;
+    // executor.trace_transaction(205)?;
     executor.trace_block()?;
 
     Ok(())
