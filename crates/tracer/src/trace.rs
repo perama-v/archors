@@ -1,13 +1,13 @@
 //! For executing a block using state.
 
-use ethers::types::{Block, Transaction};
-use revm::primitives::U256;
+use ethers::types::{Block, Transaction, H256};
+use revm::primitives::{Account, HashMap, B160, U256};
 use thiserror::Error;
 
 use crate::{
     evm::{BlockEvm, EvmError},
-    state::{build_state_from_proofs, BlockHashes, CompleteAccounts, StateError},
-    utils::UtilsError,
+    state::{build_state_from_proofs, CompleteState, Provable, StateError},
+    utils::{hex_encode, UtilsError},
 };
 
 /// An error with tracing a block
@@ -19,6 +19,11 @@ pub enum TraceError {
     UtilsError(#[from] UtilsError),
     #[error("EvmError {0}")]
     EvmError(#[from] EvmError),
+    #[error("Computed state root {computed_root} does not match header state root {header_root}")]
+    PostBlockStateRoot {
+        computed_root: String,
+        header_root: String,
+    },
     #[error("Unable to set transaction (tx_index {index}) environment {source}")]
     TxEnvError { source: EvmError, index: usize },
     #[error("Unable to execute transaction (tx_index {index}) {source}")]
@@ -28,16 +33,18 @@ pub enum TraceError {
 }
 
 /// Holds an EVM configured for single block execution.
-pub struct BlockExecutor {
+pub struct BlockExecutor<T: CompleteState + Provable> {
     block_evm: BlockEvm,
     block: Block<Transaction>,
+    /// Keeps block proof data up to date as transactions are applied.
+    block_proof_cache: T,
 }
 
-impl BlockExecutor {
+impl<T: CompleteState + Provable> BlockExecutor<T> {
     /// Loads the tracer so that it is ready to trace a block.
-    pub fn load<T>(block: Block<Transaction>, block_proofs: T) -> Result<Self, TraceError>
+    pub fn load(block: Block<Transaction>, block_proofs: T) -> Result<Self, TraceError>
     where
-        T: CompleteAccounts + BlockHashes,
+        T: CompleteState + Provable,
     {
         // For all important states, load into db.
         let mut cache_db = build_state_from_proofs(&block_proofs)?;
@@ -47,7 +54,11 @@ impl BlockExecutor {
             .add_chain_id(U256::from(1))
             .add_spec_id(&block)? // TODO
             .add_block_environment(&block)?;
-        Ok(BlockExecutor { block_evm, block })
+        Ok(BlockExecutor {
+            block_evm,
+            block,
+            block_proof_cache: block_proofs,
+        })
     }
     /// Traces a single transaction in the block.
     ///
@@ -81,13 +92,28 @@ impl BlockExecutor {
     }
     /// Traces every transaction in the block.
     pub fn trace_block(mut self) -> Result<(), TraceError> {
+        let final_tx_index = self.block.transactions.len() - 1;
         for (index, tx) in self.block.transactions.into_iter().enumerate() {
-            let _outcome = self
+            let post_tx = self
                 .block_evm
                 .add_transaction_environment(tx)
                 .map_err(|source| TraceError::TxEnvError { source, index })?
                 .execute_with_inspector_eip3155()
                 .map_err(|source| TraceError::TxExecutionError { source, index })?;
+
+            let _result = post_tx.result;
+            // Update a proof object with state that changed after a transaction was executed.
+            for (address, account) in post_tx.state.into_iter() {
+                self.block_proof_cache.update_account(address, account)?;
+            }
+            let root = self.block_proof_cache.root_hash();
+
+            if (index == final_tx_index) && (root != self.block.state_root) {
+                return Err(TraceError::PostBlockStateRoot {
+                    computed_root: hex_encode(root),
+                    header_root: hex_encode(self.block.state_root),
+                });
+            }
         }
         Ok(())
     }
