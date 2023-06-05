@@ -1,0 +1,12 @@
+[package]
+name = "archors_multiproof"
+version = "0.1.0"
+edition = "2021"
+description = "Tool for working with EIP-1186 as multiproofs that cover a single block state"
+
+
+[dependencies]
+ethers = "2.0.4"
+hex = "0.4.3"
+serde = {  version = "1.0.152", features = ["derive"] }
+thiserror = "1.0.40"
