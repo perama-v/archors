@@ -1,4 +1,4 @@
-//! For verifying a Merkle Patricita Proof for arbitrary proof values.
+//! For verifying a Merkle Patricia Proof for arbitrary proof values.
 //! E.g., Account, storage ...
 use ethers::{types::Bytes, utils::keccak256};
 use hex::FromHexError;
@@ -102,7 +102,7 @@ impl SingleProof {
     }
 }
 
-/// THe verification kind is returned to the caller.
+/// The verification kind is returned to the caller.
 ///
 /// An exclusion proof for a key does not contain information about the value
 /// of that key. The caller can make an assessment if the value for an
