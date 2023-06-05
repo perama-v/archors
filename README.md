@@ -89,39 +89,8 @@ node must provide both:
 |6|inventory|measure data overlap between proofs for different blocks|
 |7|inventory|collect stats on bytes/gas for proofs|
 |8|verify|verify merkle proof for block|
-|9|tracer|locally produce `debug_traceTransaction` / `debug_traceBlock` using proof data|
-|10|inventory|obtain required state in one pass|
-
-### Binary: Interpret
-
-Converts stdin trace into stdout interpreted trace.
-
-This command gets a trace then interprets it.
-```command
-cargo run --release --example 09_use_proof | cargo run --release -p archors_interpret
-```
-
-### Binary: Operator
-
-Converts stdin lines into aesthetic vertical stream of data.
-
-This command gets a trace, interprets it, then displays it.
-```command
-cargo run --release --example 09_use_proof \
-    | cargo run --release -p archors_interpret \
-    | cargo run --release -p archors_operator
-```
-
-### Binary: Stator
-
-Generates test cases for `eth_getRequiredBlockState`
-
-This command gets a block number, calls a node to get the required information
-and then produces a file containing the spec-compliant `RequiredBlockState`.
-That file is then sufficient to trace a block (from `eth_getBlockByNumber` with transactions)
-```command
-RUST_LOG=info cargo run -r -p archors_stator -- -b 17190873
-```
+|9|multiproof|create and update merkle multiproof for block|
+|10|tracer|locally produce `debug_traceTransaction` / `debug_traceBlock` using proof data|
 
 ## Use case
 
@@ -374,7 +343,7 @@ However this will only apply to anterograde (post-verkle-fork) blocks.
 What does tracing get you? Every step in the EVM.
 
 ```command
-cargo run --release --example 09_use_proof_to_trace |  grep '"REVERT"' | jq
+cargo run --release --example 10_use_proof_to_trace |  grep '"REVERT"' | jq
 ```
 This example is set to trace transaction index 14 in block 17190873. The
 result is filtered to only include steps that involved a `REVERT` opcode.
