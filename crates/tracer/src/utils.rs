@@ -69,6 +69,12 @@ pub fn ru256_to_eu256(input: U256) -> ethers::types::U256 {
     ethers::types::U256::from_little_endian(slice)
 }
 
+/// revm U256 to ethers H256
+pub fn ru256_to_eh256(input: U256) -> ethers::types::H256 {
+    let array: [u8; 32] = input.to_be_bytes();
+    array.into()
+}
+
 /// revm B256 to ethers H256
 pub fn rb256_to_eh256(input: revm::primitives::B256) -> ethers::types::H256 {
     let bytes: &[u8; 32] = input.as_fixed_bytes();
@@ -187,6 +193,17 @@ mod test {
         let input = U256::from_str("0x1234").unwrap();
         let derived = ru256_to_eu256(input);
         let expected = ethers::types::U256::from_str("0x1234").unwrap();
+        assert_eq!(derived, expected);
+    }
+
+    #[test]
+    fn test_ru256_to_eh256() {
+        let input = U256::from_str("0x1234").unwrap();
+        let derived = ru256_to_eh256(input);
+        let expected = ethers::types::H256::from_str(
+            "0x0000000000000000000000000000000000000000000000000000000000001234",
+        )
+        .unwrap();
         assert_eq!(derived, expected);
     }
 
