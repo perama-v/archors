@@ -62,7 +62,7 @@ pub enum ProofError {
 
 /// A proof for some data in a Merkle Patricia Tree, such as an account, or a storage value.
 #[derive(Default, Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct SingleProof {
+pub struct SingleProofPath {
     /// Merkle PATRICIA trie proof for a key/value.
     pub proof: Vec<Bytes>,
     /// Trusted root that the proof anchors to.
@@ -73,9 +73,16 @@ pub struct SingleProof {
     pub claimed_value: Vec<u8>,
 }
 
-impl SingleProof {
-    pub fn verify(&self) -> Result<Verified, ProofError> {
-        if self.proof.is_empty() {
+/// Behaviour that a proof has.
+pub trait Verifiable {
+    fn verify(&self) -> Result<Verified, ProofError>;
+}
+
+impl Verifiable for SingleProofPath {
+    fn verify(&self) -> Result<Verified, ProofError> {
+        // Traverse path
+        let total_nodes = self.proof.len();
+        if total_nodes == 0 {
             return Err(ProofError::EmptyProof);
         }
         let mut traversal = NibblePath::init(&self.path);

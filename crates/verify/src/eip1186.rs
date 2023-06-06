@@ -10,7 +10,7 @@ use serde::Deserialize;
 use thiserror::Error;
 
 use crate::{
-    proof::{ProofError, SingleProof, Verified},
+    proof::{ProofError, SingleProofPath, Verifiable, Verified},
     utils::hex_encode,
 };
 
@@ -108,7 +108,7 @@ pub fn verify_account_component(
         code_hash: proof.code_hash,
     };
 
-    let account_prover = SingleProof {
+    let account_prover = SingleProofPath {
         proof: proof.account_proof.clone(),
         root: H256::from_slice(block_state_root).0,
         path: keccak256(proof.address.as_bytes()),
@@ -134,9 +134,9 @@ fn verify_account_storage_component(
     storage_hash: &[u8; 32],
     storage_proof: StorageProof,
 ) -> Result<(), StorageError> {
-    // let claimed_storage = Storage(storage_proof.value);
     let claimed_value = storage_proof.value;
-    let storage_prover = SingleProof {
+
+    let storage_prover = SingleProofPath {
         proof: storage_proof.proof,
         root: *storage_hash,
         path: keccak256(storage_proof.key),
