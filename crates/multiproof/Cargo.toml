@@ -6,7 +6,10 @@ description = "Tool for working with EIP-1186 as multiproofs that cover a single
 
 
 [dependencies]
+archors_verify = { path = "../verify" }
 ethers = "2.0.4"
 hex = "0.4.3"
+rlp = "0.5.2"
+rlp-derive = "0.1.0"
 serde = {  version = "1.0.152", features = ["derive"] }
 thiserror = "1.0.40"
