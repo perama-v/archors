@@ -73,13 +73,8 @@ pub struct SingleProofPath {
     pub claimed_value: Vec<u8>,
 }
 
-/// Behaviour that a proof has.
-pub trait Verifiable {
-    fn verify(&self) -> Result<Verified, ProofError>;
-}
-
-impl Verifiable for SingleProofPath {
-    fn verify(&self) -> Result<Verified, ProofError> {
+impl SingleProofPath {
+    pub fn verify(&self) -> Result<Verified, ProofError> {
         // Traverse path
         let total_nodes = self.proof.len();
         if total_nodes == 0 {

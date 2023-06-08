@@ -10,7 +10,7 @@ use serde::Deserialize;
 use thiserror::Error;
 
 use crate::{
-    proof::{ProofError, SingleProofPath, Verifiable, Verified},
+    proof::{ProofError, SingleProofPath, Verified},
     utils::hex_encode,
 };
 

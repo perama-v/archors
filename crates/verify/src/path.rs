@@ -58,7 +58,7 @@ pub enum PathError {
 pub struct NibblePath {
     // Nibble (u4) sequence represented as sequence of u8.
     path: Vec<u8>,
-    // Index of nibble in path that is being viseted.
+    // Index of nibble in path that is being visited.
     visiting_index: usize,
 }
 
@@ -129,7 +129,7 @@ impl NibblePath {
     }
     /// Checks if terminal extension/leaf node has a path that matches (inclusion proof) or
     /// doesn't match (exclusion proof).
-    pub fn match_or_mismatch(&mut self, final_subpath: &[u8]) -> Result<PathNature, PathError> {
+    pub fn match_or_mismatch(&self, final_subpath: &[u8]) -> Result<PathNature, PathError> {
         let mut temp_index = self.visiting_index;
         let subpath_nibbles = prefixed_bytes_to_nibbles(final_subpath)?;
         let path_finished = temp_index + subpath_nibbles.len() == 64;
@@ -171,8 +171,6 @@ impl NibblePath {
 /// This condition is necessary but not sufficient for the overall proof verification.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PathNature {
-    //InclusionProof,
-    //ExclusionProof,
     // Paths match, not yet 32 bytes
     SubPathMatches,
     // Paths diverge, not yet 32 bytes
