@@ -47,8 +47,12 @@ pub enum PathError {
     NoPath,
     #[error("Encoded path does not contain a first byte")]
     PathEmpty,
-    #[error("Path expected to be 32 bytes")]
+    #[error("Path too long, expected to be 32 bytes")]
     PathTooLong,
+    #[error("Path too short, expected to be 32 bytes")]
+    PathTooShort,
+    #[error("Must pass an even number of nibbles")]
+    OddNumberOfNibbles
 }
 
 /// A sequence of nibbles that represent a traversal from the root of a merkle patricia tree.
@@ -160,6 +164,43 @@ impl NibblePath {
         }
         Ok(PathNature::SubPathMatches)
     }
+    /// Returns the nibbles that have not yet been traversed.
+    ///
+    /// Each nibble is represented as a byte.
+    pub fn to_be_traversed(&self) -> Result<Vec<u8>, PathError> {
+        Ok(self.path[self.visiting_index..].to_vec())
+    }
+    /// Returns the prefix-encoded path including the nibbles at start and end indices.
+    ///
+    /// As the path (32 bytes) nibbles are represented as u8, the final nibble is at index 63.
+    pub fn get_encoded_path(&self, target: TargetNodeEncoding, nibble_start: usize, nibble_end: usize) -> Result<Vec<u8>, PathError> {
+        let is_even = (nibble_end + 1 - nibble_start) % 2 == 0;
+
+        let (prefix, next_index) = match (target, is_even) {
+            (TargetNodeEncoding::Extension, true) => {
+                (nibbles_to_byte(&[0, 0])?, nibble_start)
+            },
+            (TargetNodeEncoding::Extension, false) => {
+                let first = self.path.get(nibble_start).ok_or(PathError::PathTooShort)?;
+                (nibbles_to_byte(&[1, *first])?, nibble_start + 1)
+            },
+            (TargetNodeEncoding::Leaf, true) => {
+                (nibbles_to_byte(&[2, 0])?, nibble_start)
+            },
+            (TargetNodeEncoding::Leaf, false) => {
+                let first = self.path.get(nibble_start).ok_or(PathError::PathTooShort)?;
+                (nibbles_to_byte(&[3, *first])?, nibble_start + 1)
+            },
+        };
+        let mut path_bytes: Vec<u8> = vec![prefix];
+        let remaining_nibbles = self.path.get(next_index..=nibble_end).ok_or(PathError::PathTooShort)?;
+        path_bytes.extend(nibbles_to_bytes(&remaining_nibbles)?);
+        Ok(path_bytes)
+    }
+    /// Returns the index of the nibble being visiting next.
+    pub fn visiting_index(&self) -> usize {
+        self.visiting_index
+    }
 }
 
 /// Merkle proof that a key is or isn't part of the trie.
@@ -252,6 +293,42 @@ fn byte_to_nibbles(byte: &u8) -> [u8; 2] {
     let low = byte & 0xF;
     [high, low]
 }
+
+
+/// Represents array of nibbles as little endian byte: [0xb, 0xc] -> 0xbc
+fn nibbles_to_byte(nibbles: &[u8; 2]) -> Result<u8, PathError> {
+    // 0xb -> 0xb0
+    if nibbles[0] > 15 {
+        return Err(PathError::InvalidNibble(nibbles[0]))
+    }
+    let high = nibbles[0] << 4;
+    // 0xc -> 0x0c
+    if nibbles[1] > 15 {
+        return Err(PathError::InvalidNibble(nibbles[1]))
+    }
+    let low = nibbles[1] & 0x0F;
+    // 0xb0 & 0x0c -> 0xbc
+    Ok(high | low)
+}
+
+pub enum TargetNodeEncoding {
+    Leaf,
+    Extension
+}
+
+/// Converts a collection of nibbles into bytes: [0xb, 0xc, 0x3, 0xa] -> [0xbc, 0x3a]
+fn nibbles_to_bytes(nibbles: &[u8]) -> Result<Vec<u8>, PathError> {
+    if nibbles.len() % 2 != 0 {
+        return Err(PathError::OddNumberOfNibbles)
+    }
+    let mut bytes: Vec<u8> = vec![];
+    for (index, nibble) in nibbles.iter().enumerate().step_by(2) {
+        let byte = nibbles_to_byte(&[*nibble, nibbles[index + 1]])?;
+        bytes.push(byte);
+    }
+    Ok(bytes)
+}
+
 
 #[cfg(test)]
 mod test {
@@ -569,5 +646,71 @@ mod test {
             traversal.match_or_mismatch(even_leaf).unwrap(),
             PathNature::FullPathDiverges
         );
+    }
+
+
+    #[test]
+    fn test_nibbles_to_byte() {
+        assert_eq!(nibbles_to_byte(&[0x0, 0x0]).unwrap(), 0x00);
+        assert_eq!(nibbles_to_byte(&[0xf, 0xf]).unwrap(), 0xff);
+        assert_eq!(nibbles_to_byte(&[0xf, 0x0]).unwrap(), 0xf0);
+        assert_eq!(nibbles_to_byte(&[0x0, 0xf]).unwrap(), 0x0f);
+        assert_eq!(nibbles_to_byte(&[0x3, 0xc]).unwrap(), 0x3c);
+        assert!(nibbles_to_byte(&[0x30, 0x9]).is_err());
+    }
+
+
+    #[test]
+    fn test_get_encoded_path_even_extension() {
+        let traversal = NibblePath::init(
+            &hex::decode("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+                .unwrap(),
+        );
+        let encoded_path = traversal.get_encoded_path(TargetNodeEncoding::Extension, 60, 63).unwrap();
+        // 00cdef
+        assert_eq!(encoded_path, vec![0x00, 0xcd, 0xef]);
+    }
+
+    #[test]
+    fn test_get_encoded_path_odd_extension() {
+        let traversal = NibblePath::init(
+            &hex::decode("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+                .unwrap(),
+        );
+        let encoded_path = traversal.get_encoded_path(TargetNodeEncoding::Extension, 61, 63).unwrap();
+        // 1def
+        assert_eq!(encoded_path, vec![0x1d, 0xef]);
+    }
+
+
+    #[test]
+    fn test_get_encoded_path_even_leaf() {
+        let traversal = NibblePath::init(
+            &hex::decode("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+                .unwrap(),
+        );
+        let encoded_path = traversal.get_encoded_path(TargetNodeEncoding::Leaf, 60, 63).unwrap();
+        // 20cdef
+        assert_eq!(encoded_path, vec![0x20, 0xcd, 0xef]);
+    }
+
+    #[test]
+    fn test_get_encoded_path_odd_leaf() {
+        let traversal = NibblePath::init(
+            &hex::decode("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+                .unwrap(),
+        );
+        let encoded_path = traversal.get_encoded_path(TargetNodeEncoding::Leaf, 61, 63).unwrap();
+        // 3def
+        assert_eq!(encoded_path, vec![0x3d, 0xef]);
+    }
+
+    #[test]
+    fn test_nibbles_to_bytes() {
+        assert_eq!(nibbles_to_bytes(&[0xb, 0xc, 0x3, 0xa, 0xf, 0x1]).unwrap(), vec![0xbc, 0x3a, 0xf1]);
+        // Invalid nibbles
+        assert!(nibbles_to_bytes(&[0xb, 0xc, 0x3, 0xa, 0xf6, 0x1e]).is_err() );
+        // Odd length
+        assert!(nibbles_to_bytes(&[0xb, 0xc, 0x3, 0xa, 0x1]).is_err());
     }
 }
