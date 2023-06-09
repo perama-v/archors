@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use archors_verify::path::{
     NibblePath, PathError,
     PathNature::{FullPathDiverges, FullPathMatches, SubPathDiverges, SubPathMatches},
-    PrefixEncoding,
+    PrefixEncoding, TargetNodeEncoding,
 };
 use ethers::{
     types::{Bytes, H256},
@@ -59,6 +59,8 @@ pub enum ProofError {
 
 #[derive(Debug, Error)]
 pub enum ModifyError {
+    #[error("Branch node to few items")]
+    BranchTooShort,
     #[error("Leaf node has no final path")]
     LeafHasNoFinalPath,
     #[error("The visited nodes list is empty")]
@@ -69,6 +71,10 @@ pub enum ModifyError {
     ExtensionHasNoPath,
     #[error("Branch node does not have enough items")]
     NoItemInBranch,
+    #[error("PathError {0}")]
+    PathError(#[from] PathError),
+    #[error("Branch node path was not long enough")]
+    PathEndedAtBranch,
 }
 /// A representation of a Merkle PATRICIA Trie Multi Proof.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -116,7 +122,7 @@ impl MultiProof {
                 .data
                 .get(&next_node_hash)
                 .ok_or(ProofError::NoNodeForHash)?;
-            let next_node: Vec<Vec<u8>> = rlp::decode_list(&next_node_rlp);
+            let next_node: Vec<Vec<u8>> = rlp::decode_list(next_node_rlp);
 
             match NodeKind::deduce(&next_node)? {
                 kind @ NodeKind::Branch => {
@@ -128,13 +134,17 @@ impl MultiProof {
                     visited_nodes.push(VisitedNode {
                         kind,
                         node_hash: next_node_hash,
-                        item_index: item_index,
+                        item_index,
                         traversal_record,
                     });
                     let is_exclusion_proof = item.is_empty();
                     match (is_exclusion_proof, intent) {
-                        (true, Intent::Modify(_)) => {
-                            self.apply_changes(Change::BranchExclusionToInclusion, &visited_nodes)?;
+                        (true, Intent::Modify(new_rlp_value)) => {
+                            self.apply_changes(
+                                Change::BranchExclusionToInclusion(new_rlp_value.clone()),
+                                &visited_nodes,
+                            )?;
+                            return Ok(());
                         }
                         (true, Intent::Remove) => {
                             // Key already not in trie.
@@ -146,7 +156,7 @@ impl MultiProof {
                         }
                         (false, _) => {
                             // Continue traversing
-                            next_node_hash = H256::from_slice(&item);
+                            next_node_hash = H256::from_slice(item);
                         }
                     }
                 }
@@ -163,14 +173,15 @@ impl MultiProof {
                         (SubPathMatches, _) => {
                             let item =
                                 next_node.get(1).ok_or(ProofError::ExtensionHasNoNextNode)?;
-                            next_node_hash = H256::from_slice(&item);
-                            todo!("need to update traversal here");
+                            next_node_hash = H256::from_slice(item);
+                            traversal.skip_extension_node_nibbles(extension)?;
                         }
-                        (SubPathDiverges, Intent::Modify(_)) => {
+                        (SubPathDiverges, Intent::Modify(new_rlp_value)) => {
                             self.apply_changes(
-                                Change::ExtensionExclusionToInclusion,
+                                Change::ExtensionExclusionToInclusion(new_rlp_value.clone()),
                                 &visited_nodes,
                             )?;
+                            return Ok(());
                         }
                         (SubPathDiverges, Intent::Remove) => {
                             // Key already not in trie
@@ -201,7 +212,7 @@ impl MultiProof {
                         }
                         (FullPathMatches, Intent::Modify(new_value)) => {
                             self.apply_changes(
-                                Change::LeafInclusionModify(new_value.to_owned()),
+                                Change::LeafInclusionModify(new_value.clone()),
                                 &visited_nodes,
                             )?;
                             return Ok(());
@@ -221,8 +232,11 @@ impl MultiProof {
                             }
                             return Ok(());
                         }
-                        (FullPathDiverges, Intent::Modify(_)) => {
-                            self.apply_changes(Change::LeafExclusionToInclusion, &visited_nodes)?;
+                        (FullPathDiverges, Intent::Modify(new_rlp_value)) => {
+                            self.apply_changes(
+                                Change::LeafExclusionToInclusion(new_rlp_value.clone()),
+                                &visited_nodes,
+                            )?;
                             return Ok(());
                         }
                         (FullPathDiverges, Intent::Remove) => {
@@ -238,6 +252,10 @@ impl MultiProof {
             }
         }
     }
+    /// Updates the multiproof and modifies the proof structure if needed.
+    ///
+    /// May involve changing between inclusion and exclusion proofs for a
+    /// value, and associated removal or addition of nodes.
     fn apply_changes(
         &mut self,
         change: Change,
@@ -251,29 +269,55 @@ impl MultiProof {
         // Get the terminal node by removing it from the proof.
         let old_node_rlp = self
             .data
-            .remove(&old_terminal_hash.into())
+            .remove(&old_terminal_hash)
             .ok_or(ModifyError::NoNodeForHash)?;
-        let old_node: Vec<Vec<u8>> = rlp::decode_list(&old_node_rlp);
+        let mut old_node: Vec<Vec<u8>> = rlp::decode_list(&old_node_rlp);
 
         match change {
-            Change::BranchExclusionToInclusion => {
+            Change::BranchExclusionToInclusion(new_leaf_rlp_value) => {
                 // Main concept: Add leaf to the previously terminal branch.
                 // As an exclusion proof there is no other key that overlaps this path part,
                 // so no extension node is needed.
 
                 // Leaf: [remaining_path, value]
+                let traversal = &last_visited.traversal_record;
+                let branch_item_index = traversal.visiting_index() + 1;
+                // Remaining path is for the leaf.
+                let leaf_path_start = traversal.visiting_index() + 1;
+                let leaf_path = last_visited.traversal_record.get_encoded_path(
+                    TargetNodeEncoding::Leaf,
+                    leaf_path_start,
+                    63,
+                )?;
+                let leaf_node = Node::from(vec![leaf_path, new_leaf_rlp_value]);
+                let leaf_node_rlp = leaf_node.rlp_bytes();
+                let leaf_node_hash = keccak256(&leaf_node_rlp);
+                // Store leaf node
+                self.data
+                    .insert(leaf_node_hash.into(), leaf_node_rlp.into());
+                // Store updated branch node
+                let leaf_parent = old_node
+                    .get_mut(branch_item_index)
+                    .ok_or(ModifyError::BranchTooShort)?;
+                *leaf_parent = leaf_node_hash.to_vec();
+                let updated_branch_node: Node = Node::from(old_node);
 
-                todo!();
+                // Update the rest (starting from parents of the branch, to the root.)
+                let mut updated_hash = keccak256(&updated_branch_node.rlp_bytes().to_vec());
+                for outdated in visited.iter().rev().skip(1) {
+                    updated_hash = self.update_node_with_child_hash(outdated, &updated_hash)?;
+                }
+                self.root = updated_hash.into();
             }
-            Change::ExtensionExclusionToInclusion => {
+            Change::ExtensionExclusionToInclusion(new_leaf_rlp_value) => {
                 todo!("Alter: Exclusion proof to inclusion proof by shortening extension to common path, then adding branch node, and leaf for new value and then bubbling changes.")
             }
-            Change::LeafExclusionToInclusion => {
+            Change::LeafExclusionToInclusion(new_leaf_rlp_value) => {
                 todo!("Alter: Exclusion proof to inclusion proof by adding extension node and branch node and one leaf node, moving the current leaf node to the branch node too.")
             }
-            Change::LeafInclusionModify(new_data) => {
+            Change::LeafInclusionModify(new_leaf_rlp_value) => {
                 let path = old_node.first().ok_or(ModifyError::LeafHasNoFinalPath)?;
-                let new_leaf_data = Node(vec![Item(path.to_owned()), Item(new_data)]);
+                let new_leaf_data = Node::from(vec![path.to_owned(), new_leaf_rlp_value]);
                 let new_leaf_rlp = new_leaf_data.rlp_bytes().to_vec();
                 let mut updated_hash = keccak256(&new_leaf_rlp);
 
@@ -326,7 +370,7 @@ impl MultiProof {
                     .first()
                     .ok_or(ModifyError::ExtensionHasNoPath)?;
                 // [path, next_node]
-                Node(vec![Item(path.to_owned()), Item(child_hash.to_vec())])
+                Node::from(vec![path.to_owned(), child_hash.to_vec()])
             }
             NodeKind::Leaf => todo!(),
         };
@@ -341,15 +385,29 @@ impl MultiProof {
 #[derive(Default, Debug, Clone, PartialEq, Eq, Deserialize, RlpEncodable, RlpDecodable)]
 struct Node(Vec<Item>);
 
+impl From<Vec<Vec<u8>>> for Node {
+    fn from(value: Vec<Vec<u8>>) -> Self {
+        Self(value.into_iter().map(Item::from).collect())
+    }
+}
+
 /// A merkle patricia trie node item at any level/height of an account proof.
 #[derive(Default, Debug, Clone, PartialEq, Eq, Deserialize, RlpEncodable, RlpDecodable)]
 struct Item(Vec<u8>);
 
+impl From<Vec<u8>> for Item {
+    fn from(value: Vec<u8>) -> Self {
+        Self(value)
+    }
+}
+
 /// A modification to the multiproof that is required.
+///
+/// The new rlp encoded value is required in some variants.
 pub enum Change {
-    BranchExclusionToInclusion,
-    ExtensionExclusionToInclusion,
-    LeafExclusionToInclusion,
+    BranchExclusionToInclusion(Vec<u8>),
+    ExtensionExclusionToInclusion(Vec<u8>),
+    LeafExclusionToInclusion(Vec<u8>),
     LeafInclusionModify(Vec<u8>),
     LeafInclusionToExclusion,
 }
@@ -392,8 +450,8 @@ impl NodeKind {
             17 => Ok(NodeKind::Branch),
             2 => {
                 // Leaf or extension
-                let partial_path = node.get(0).ok_or(ProofError::NodeEmpty)?;
-                let encoding = partial_path.get(0).ok_or(ProofError::NoEncoding)?;
+                let partial_path = node.first().ok_or(ProofError::NodeEmpty)?;
+                let encoding = partial_path.first().ok_or(ProofError::NoEncoding)?;
                 Ok(match PrefixEncoding::try_from(encoding)? {
                     PrefixEncoding::ExtensionEven | PrefixEncoding::ExtensionOdd(_) => {
                         NodeKind::Extension
