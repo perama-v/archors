@@ -154,3 +154,28 @@ no optimisations seem important here (proof sparsity, HashMap replacements, Etc.
 Make a modification (see above). Then when recalculate the hashes all the way to the root. This is the new root of the trie. This must be stored so one can retrieve the root for following paths for
 any key.
 
+
+### Editing proofs
+
+A change the the proof structure may be required to get the post-block state root.
+For example: If a key is not in the trie, and is added during the block, then it
+may start as an exclusion proof, and will then be an inclusion proof.
+
+Exclusion proof for path ...abcdef
+
+```mermaid
+flowchart TD
+    A[some traversal ...] --> B[extension 'abc12345'] --> C[branch node]
+    B -.- E[Exclusion proof for key `...abcdef`]
+```
+
+Converting to inclusion proof, the extension node is shortened to 'abc' and a new branch
+node is added:
+
+```mermaid
+flowchart TD
+    A[some traversal ...] --> B[extension 'abc'] --> F[branch]
+    F --item 1--> C[extension '2345'] --> D[branch node]
+    F --item d--> E[path 'ef', inclusion proof for leaf '...abcdef']
+```
+
