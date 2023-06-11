@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 
 use archors_verify::path::{
-    NibblePath, PathError,
+    nibbles_to_prefixed_bytes, prefixed_bytes_to_nibbles, NibblePath, PathError,
     PathNature::{FullPathDiverges, FullPathMatches, SubPathDiverges, SubPathMatches},
     PrefixEncoding, TargetNodeEncoding,
 };
@@ -69,12 +69,16 @@ pub enum ModifyError {
     NoNodeForHash,
     #[error("Extension node has no final path")]
     ExtensionHasNoPath,
+    #[error("Extension node has no items")]
+    ExtensionHasNoItems,
     #[error("Branch node does not have enough items")]
     NoItemInBranch,
     #[error("PathError {0}")]
     PathError(#[from] PathError),
     #[error("Branch node path was not long enough")]
     PathEndedAtBranch,
+    #[error("Extension path was not long enough to split")]
+    ExtensionPathTooShort,
 }
 /// A representation of a Merkle PATRICIA Trie Multi Proof.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -176,22 +180,25 @@ impl MultiProof {
                             next_node_hash = H256::from_slice(item);
                             traversal.skip_extension_node_nibbles(extension)?;
                         }
-                        (SubPathDiverges, Intent::Modify(new_rlp_value)) => {
+                        (SubPathDiverges(divergent_nibble_index), Intent::Modify(new_value)) => {
                             self.apply_changes(
-                                Change::ExtensionExclusionToInclusion(new_rlp_value.clone()),
+                                Change::ExtensionExclusionToInclusion {
+                                    new_value: new_value.clone(),
+                                    divergent_nibble_index,
+                                },
                                 &visited_nodes,
                             )?;
                             return Ok(());
                         }
-                        (SubPathDiverges, Intent::Remove) => {
+                        (SubPathDiverges(_), Intent::Remove) => {
                             // Key already not in trie
                             return Ok(());
                         }
-                        (SubPathDiverges, Intent::VerifyExclusion) => return Ok(()),
-                        (SubPathDiverges, Intent::VerifyInclusion(_)) => {
+                        (SubPathDiverges(_), Intent::VerifyExclusion) => return Ok(()),
+                        (SubPathDiverges(_), Intent::VerifyInclusion(_)) => {
                             return Err(ProofError::InclusionRequired)
                         }
-                        (FullPathMatches | FullPathDiverges, _) => {
+                        (FullPathMatches | FullPathDiverges(_), _) => {
                             return Err(ProofError::FinalExtension)
                         }
                     };
@@ -207,7 +214,7 @@ impl MultiProof {
                         traversal_record,
                     });
                     match (traversal.match_or_mismatch(final_subpath)?, intent) {
-                        (SubPathMatches | SubPathDiverges, _) => {
+                        (SubPathMatches | SubPathDiverges(_), _) => {
                             return Err(ProofError::LeafPathIncomplete)
                         }
                         (FullPathMatches, Intent::Modify(new_value)) => {
@@ -232,19 +239,25 @@ impl MultiProof {
                             }
                             return Ok(());
                         }
-                        (FullPathDiverges, Intent::Modify(new_rlp_value)) => {
+                        (
+                            FullPathDiverges(divergent_nibble_index),
+                            Intent::Modify(new_rlp_value),
+                        ) => {
                             self.apply_changes(
-                                Change::LeafExclusionToInclusion(new_rlp_value.clone()),
+                                Change::LeafExclusionToInclusion {
+                                    new_value: new_rlp_value.clone(),
+                                    divergent_nibble_index,
+                                },
                                 &visited_nodes,
                             )?;
                             return Ok(());
                         }
-                        (FullPathDiverges, Intent::Remove) => {
+                        (FullPathDiverges(_), Intent::Remove) => {
                             // Key already not in trie
                             return Ok(());
                         }
-                        (FullPathDiverges, Intent::VerifyExclusion) => return Ok(()),
-                        (FullPathDiverges, Intent::VerifyInclusion(_)) => {
+                        (FullPathDiverges(_), Intent::VerifyExclusion) => return Ok(()),
+                        (FullPathDiverges(_), Intent::VerifyInclusion(_)) => {
                             return Err(ProofError::InclusionRequired)
                         }
                     }
@@ -302,17 +315,104 @@ impl MultiProof {
                 *leaf_parent = leaf_node_hash.to_vec();
                 let updated_branch_node: Node = Node::from(old_node);
 
-                // Update the rest (starting from parents of the branch, to the root.)
-                let mut updated_hash = keccak256(&updated_branch_node.rlp_bytes().to_vec());
+                // Update the rest (starting from parents of the branch, ending at the root)
+                let mut updated_hash = keccak256(&updated_branch_node.rlp_bytes());
                 for outdated in visited.iter().rev().skip(1) {
                     updated_hash = self.update_node_with_child_hash(outdated, &updated_hash)?;
                 }
                 self.root = updated_hash.into();
             }
-            Change::ExtensionExclusionToInclusion(new_leaf_rlp_value) => {
-                todo!("Alter: Exclusion proof to inclusion proof by shortening extension to common path, then adding branch node, and leaf for new value and then bubbling changes.")
+            Change::ExtensionExclusionToInclusion {
+                new_value,
+                divergent_nibble_index,
+            } => {
+                // Main concept: Exclusion proof to inclusion proof by adding a leaf.
+
+                // Make leaf.
+                let traversal = &last_visited.traversal_record;
+                let new_leaf_path = traversal.get_encoded_path(
+                    TargetNodeEncoding::Leaf,
+                    divergent_nibble_index + 1, // leave a nibble (+1) for the branch
+                    63,
+                )?;
+                let leaf = Node::from(vec![new_leaf_path, new_value]);
+                let leaf_rlp = leaf.rlp_bytes();
+                let leaf_hash = keccak256(&leaf_rlp);
+                self.data.insert(leaf_hash.into(), leaf_rlp.into());
+
+                // Modify extension to start after the new branch.
+                let num_common = divergent_nibble_index - traversal.visiting_index();
+                let extension_path = old_node
+                    .get_mut(0)
+                    .ok_or(ModifyError::ExtensionHasNoItems)?;
+                let old_extension_nibbles = prefixed_bytes_to_nibbles(extension_path)?;
+
+                let (common_nibbles, divergent_nibbles) =
+                    old_extension_nibbles.split_at(num_common);
+                let (extension_index_in_branch, updated_extension_nibbles) = divergent_nibbles
+                    .split_first()
+                    .ok_or(ModifyError::ExtensionPathTooShort)?;
+
+                // Update old extension node and store
+                *extension_path = nibbles_to_prefixed_bytes(
+                    updated_extension_nibbles,
+                    TargetNodeEncoding::Extension,
+                )?;
+                let updated_extension_rlp = Node::from(old_node).rlp_bytes();
+                let updated_extension_hash = keccak256(&updated_extension_rlp);
+                self.data
+                    .insert(updated_extension_hash.into(), updated_extension_rlp.into());
+
+                // Make new branch and add children (modified extension and new leaf).
+                let mut node_items: Vec<Vec<u8>> = (0..=17).map(|_| vec![]).collect();
+                *node_items
+                    .get_mut(*extension_index_in_branch as usize)
+                    .ok_or(ModifyError::BranchTooShort)? = updated_extension_hash.into();
+                let leaf_index = traversal.nibble_at_index(divergent_nibble_index)?;
+                *node_items
+                    .get_mut(leaf_index as usize)
+                    .ok_or(ModifyError::BranchTooShort)? = leaf_hash.into();
+                let branch_rlp = Node::from(node_items).rlp_bytes();
+                let branch_hash = keccak256(&branch_rlp);
+                self.data.insert(branch_hash.into(), branch_rlp.into());
+
+                // Get the most proximal hash.
+                let mut updated_hash: [u8; 32];
+                if common_nibbles.is_empty() {
+                    // The extension has nothing in common with the new leaf path.
+                    // - traversal ...
+                    //   - new branch
+                    //     - new leaf
+                    //     - modified extension
+                    //       - original branch
+                    updated_hash = branch_hash;
+                } else {
+                    // The extension has something in common with the new leaf path.
+                    // - traversal ...
+                    //   - new common extension
+                    //     - new branch
+                    //       - new leaf
+                    //       - modified extension
+                    //         - original branch
+                    let common_extension_path =
+                        nibbles_to_prefixed_bytes(common_nibbles, TargetNodeEncoding::Extension)?;
+                    let common_extension =
+                        Node::from(vec![common_extension_path, branch_hash.into()]).rlp_bytes();
+                    let common_extension_hash = keccak256(&common_extension);
+                    self.data
+                        .insert(common_extension_hash.into(), common_extension.into());
+                    updated_hash = common_extension_hash;
+                }
+                // Update the rest
+                for outdated in visited.iter().rev().skip(1) {
+                    updated_hash = self.update_node_with_child_hash(outdated, &updated_hash)?;
+                }
+                self.root = updated_hash.into();
             }
-            Change::LeafExclusionToInclusion(new_leaf_rlp_value) => {
+            Change::LeafExclusionToInclusion {
+                new_value,
+                divergent_nibble_index,
+            } => {
                 todo!("Alter: Exclusion proof to inclusion proof by adding extension node and branch node and one leaf node, moving the current leaf node to the branch node too.")
             }
             Change::LeafInclusionModify(new_leaf_rlp_value) => {
@@ -403,11 +503,19 @@ impl From<Vec<u8>> for Item {
 
 /// A modification to the multiproof that is required.
 ///
-/// The new rlp encoded value is required in some variants.
+/// - The new rlp encoded value is required in some variants.
+/// - The new index of the nibble (range 0-63) that the excluded key shared
+/// with the existing trie is required in some exclusion proofs.
 pub enum Change {
     BranchExclusionToInclusion(Vec<u8>),
-    ExtensionExclusionToInclusion(Vec<u8>),
-    LeafExclusionToInclusion(Vec<u8>),
+    ExtensionExclusionToInclusion {
+        new_value: Vec<u8>,
+        divergent_nibble_index: usize,
+    },
+    LeafExclusionToInclusion {
+        new_value: Vec<u8>,
+        divergent_nibble_index: usize,
+    },
     LeafInclusionModify(Vec<u8>),
     LeafInclusionToExclusion,
 }
