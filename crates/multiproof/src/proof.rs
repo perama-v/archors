@@ -69,16 +69,16 @@ pub enum ModifyError {
     NoNodeForHash,
     #[error("Extension node has no final path")]
     ExtensionHasNoPath,
-    #[error("Extension node has no items")]
-    ExtensionHasNoItems,
+    #[error("Node has no items")]
+    NodeHasNoItems,
     #[error("Branch node does not have enough items")]
     NoItemInBranch,
     #[error("PathError {0}")]
     PathError(#[from] PathError),
     #[error("Branch node path was not long enough")]
     PathEndedAtBranch,
-    #[error("Extension path was not long enough to split")]
-    ExtensionPathTooShort,
+    #[error("Node path was not long enough to split")]
+    NodePathTooShort,
 }
 /// A representation of a Merkle PATRICIA Trie Multi Proof.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -327,82 +327,24 @@ impl MultiProof {
                 divergent_nibble_index,
             } => {
                 // Main concept: Exclusion proof to inclusion proof by adding a leaf.
+                // An extension is required if the extension has something
+                // in common with the new leaf path.
 
-                // Make leaf.
-                let traversal = &last_visited.traversal_record;
-                let new_leaf_path = traversal.get_encoded_path(
-                    TargetNodeEncoding::Leaf,
-                    divergent_nibble_index + 1, // leave a nibble (+1) for the branch
-                    63,
-                )?;
-                let leaf = Node::from(vec![new_leaf_path, new_value]);
-                let leaf_rlp = leaf.rlp_bytes();
-                let leaf_hash = keccak256(&leaf_rlp);
-                self.data.insert(leaf_hash.into(), leaf_rlp.into());
+                // - traversal ...
+                //   - new common extension (if required)
+                //     - new branch
+                //       - new leaf
+                //       - modified extension
+                //         - original branch
 
-                // Modify extension to start after the new branch.
-                let num_common = divergent_nibble_index - traversal.visiting_index();
-                let extension_path = old_node
-                    .get_mut(0)
-                    .ok_or(ModifyError::ExtensionHasNoItems)?;
-                let old_extension_nibbles = prefixed_bytes_to_nibbles(extension_path)?;
-
-                let (common_nibbles, divergent_nibbles) =
-                    old_extension_nibbles.split_at(num_common);
-                let (extension_index_in_branch, updated_extension_nibbles) = divergent_nibbles
-                    .split_first()
-                    .ok_or(ModifyError::ExtensionPathTooShort)?;
-
-                // Update old extension node and store
-                *extension_path = nibbles_to_prefixed_bytes(
-                    updated_extension_nibbles,
+                let mut updated_hash = self.add_branch_for_new_leaf(
+                    old_node,
+                    last_visited,
+                    divergent_nibble_index,
                     TargetNodeEncoding::Extension,
+                    new_value,
                 )?;
-                let updated_extension_rlp = Node::from(old_node).rlp_bytes();
-                let updated_extension_hash = keccak256(&updated_extension_rlp);
-                self.data
-                    .insert(updated_extension_hash.into(), updated_extension_rlp.into());
 
-                // Make new branch and add children (modified extension and new leaf).
-                let mut node_items: Vec<Vec<u8>> = (0..=17).map(|_| vec![]).collect();
-                *node_items
-                    .get_mut(*extension_index_in_branch as usize)
-                    .ok_or(ModifyError::BranchTooShort)? = updated_extension_hash.into();
-                let leaf_index = traversal.nibble_at_index(divergent_nibble_index)?;
-                *node_items
-                    .get_mut(leaf_index as usize)
-                    .ok_or(ModifyError::BranchTooShort)? = leaf_hash.into();
-                let branch_rlp = Node::from(node_items).rlp_bytes();
-                let branch_hash = keccak256(&branch_rlp);
-                self.data.insert(branch_hash.into(), branch_rlp.into());
-
-                // Get the most proximal hash.
-                let mut updated_hash: [u8; 32];
-                if common_nibbles.is_empty() {
-                    // The extension has nothing in common with the new leaf path.
-                    // - traversal ...
-                    //   - new branch
-                    //     - new leaf
-                    //     - modified extension
-                    //       - original branch
-                    updated_hash = branch_hash;
-                } else {
-                    // The extension has something in common with the new leaf path.
-                    // - traversal ...
-                    //   - new common extension
-                    //     - new branch
-                    //       - new leaf
-                    //       - modified extension
-                    //         - original branch
-                    let common_extension_path =
-                        nibbles_to_prefixed_bytes(common_nibbles, TargetNodeEncoding::Extension)?;
-                    let common_extension =
-                        Node::from(vec![common_extension_path, branch_hash.into()]).rlp_bytes();
-                    let common_extension_hash = keccak256(&common_extension);
-                    self.data
-                        .insert(common_extension_hash.into(), common_extension.into());
-                    updated_hash = common_extension_hash;
-                }
                 // Update the rest
                 for outdated in visited.iter().rev().skip(1) {
                     updated_hash = self.update_node_with_child_hash(outdated, &updated_hash)?;
@@ -413,7 +355,29 @@ impl MultiProof {
                 new_value,
                 divergent_nibble_index,
             } => {
-                todo!("Alter: Exclusion proof to inclusion proof by adding extension node and branch node and one leaf node, moving the current leaf node to the branch node too.")
+                // Main concept: Add an extension node then a branch node and move old leaf to it.
+                // Then add new leaf node. An extension is required if
+                // the old and new leaves have multiple nibbles in common.
+                
+                // - traversal ...
+                //   - new common extension (if required)
+                //     - new branch
+                //       - new leaf
+                //       - old leaf
+
+                let mut updated_hash = self.add_branch_for_new_leaf(
+                    old_node,
+                    last_visited,
+                    divergent_nibble_index,
+                    TargetNodeEncoding::Leaf,
+                    new_value,
+                )?;
+
+                // Update the rest
+                for outdated in visited.iter().rev().skip(1) {
+                    updated_hash = self.update_node_with_child_hash(outdated, &updated_hash)?;
+                }
+                self.root = updated_hash.into();
             }
             Change::LeafInclusionModify(new_leaf_rlp_value) => {
                 let path = old_node.first().ok_or(ModifyError::LeafHasNoFinalPath)?;
@@ -478,6 +442,103 @@ impl MultiProof {
         let updated_hash = keccak256(&updated_rlp);
         self.data.insert(updated_hash.into(), updated_rlp);
         Ok(updated_hash)
+    }
+    /// Adds a new leaf where there is curently an extension exclusion proof or leaf
+    /// exclusion proof.
+    ///
+    /// This will turn the exclusion proof in to an inclusion proof.
+    /// If the new leaf has some common path, an extension is added.
+    ///
+    /// Before:
+    /// - traversal ...
+    ///   - node (extension or leaf)
+    ///       - original branch (if parent is extension)
+    ///
+    /// After:
+    /// - traversal ...
+    ///   - new common extension (if required)
+    ///     - new branch
+    ///       - new leaf
+    ///       - modified node (extension or leaf)
+    ///         - original branch (if parent is extension)
+    ///
+    /// Returns the most proximal newly created node hash.
+    fn add_branch_for_new_leaf(
+        &mut self,
+        old_node: Vec<Vec<u8>>,
+        last_visited: &VisitedNode,
+        divergent_nibble_index: usize,
+        old_node_kind: TargetNodeEncoding,
+        new_leaf_value: Vec<u8>,
+    ) -> Result<[u8; 32], ModifyError> {
+        let mut old_node = old_node;
+        // Make new leaf.
+        let traversal = &last_visited.traversal_record;
+        let new_leaf_path = traversal.get_encoded_path(
+            TargetNodeEncoding::Leaf,
+            divergent_nibble_index + 1, // leave a nibble (+1) for the branch
+            63,
+        )?;
+        let leaf = Node::from(vec![new_leaf_path, new_leaf_value]);
+        let leaf_rlp = leaf.rlp_bytes();
+        let leaf_hash = keccak256(&leaf_rlp);
+        self.data.insert(leaf_hash.into(), leaf_rlp.into());
+
+        // Modify old node to start after the new branch.
+        let num_common = divergent_nibble_index - traversal.visiting_index();
+        let old_node_path = old_node.get_mut(0).ok_or(ModifyError::NodeHasNoItems)?;
+        let old_node_nibbles = prefixed_bytes_to_nibbles(old_node_path)?;
+
+        let (common_nibbles, divergent_nibbles) = old_node_nibbles.split_at(num_common);
+        let (updated_node_index_in_branch, updated_node_nibbles) = divergent_nibbles
+            .split_first()
+            .ok_or(ModifyError::NodePathTooShort)?;
+
+        // Update old node and store
+        *old_node_path = nibbles_to_prefixed_bytes(updated_node_nibbles, old_node_kind)?;
+        let updated_node_rlp = Node::from(old_node).rlp_bytes();
+        let updated_node_hash = keccak256(&updated_node_rlp);
+        self.data
+            .insert(updated_node_hash.into(), updated_node_rlp.into());
+
+        // Make new branch and add children (modified node and new leaf).
+        let mut node_items: Vec<Vec<u8>> = (0..=17).map(|_| vec![]).collect();
+        *node_items
+            .get_mut(*updated_node_index_in_branch as usize)
+            .ok_or(ModifyError::BranchTooShort)? = updated_node_hash.into();
+        let leaf_index = traversal.nibble_at_index(divergent_nibble_index)?;
+        *node_items
+            .get_mut(leaf_index as usize)
+            .ok_or(ModifyError::BranchTooShort)? = leaf_hash.into();
+        let branch_rlp = Node::from(node_items).rlp_bytes();
+        let branch_hash = keccak256(&branch_rlp);
+        self.data.insert(branch_hash.into(), branch_rlp.into());
+
+        if common_nibbles.is_empty() {
+            // Paths have something in common
+            // - traversal ...
+            //   - new branch
+            //     - new leaf
+            //     - modified node (extension or leaf)
+            //       - original branch (if parent is extension)
+            return Ok(branch_hash);
+        } else {
+            // Paths have something in common
+            // - traversal ...
+            //   - new common extension (if required)
+            //     - new branch
+            //       - new leaf
+            //       - modified node (extension or leaf)
+            //         - original branch (if parent is extension)
+            let common_extension_path =
+                nibbles_to_prefixed_bytes(common_nibbles, TargetNodeEncoding::Extension)?;
+            let common_extension =
+                Node::from(vec![common_extension_path, branch_hash.into()]).rlp_bytes();
+            let common_extension_hash = keccak256(&common_extension);
+            self.data
+                .insert(common_extension_hash.into(), common_extension.into());
+            return Ok(common_extension_hash);
+        }
     }
 }
 
