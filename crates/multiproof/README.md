@@ -179,3 +179,91 @@ flowchart TD
     F --item d--> E[path 'ef', inclusion proof for leaf '...abcdef']
 ```
 
+### Proof edits with tree depth reduction
+
+> 🚧 Blocker
+
+If there is an inclusion proof that is converted to an exclusion proof, this
+may result in a removal of some internal nodes.
+
+Suppose the deletion of key ...abcdef
+
+```mermaid
+flowchart TD
+    A[some traversal ...] --> B[extension 'abc'] --> F[branch A]
+    F --item 1--> C[extension '2345'] --> D[branch B]
+    F --item d--> E[path 'ef', inclusion proof for leaf '...abcdef']
+```
+In this case, the branch between the two extensions can be combined.
+
+
+```mermaid
+flowchart TD
+    A[some traversal ...] --> B[extension 'abc12345'] --> F[branch A]
+```
+
+Pattern: EBE -> E+
+
+This creates a problem because we do not have the extension node '2345' in this multiproof,
+only the hash of that node inside branch A. The extension node is not available, and
+so it is not known what path to combine with the 'abc1' path.
+
+
+```mermaid
+flowchart TD
+    A[some traversal ...] --> B[extension 'abc'] --> F[branch A]
+    F --item 1--> C[hash of extension '2345']
+    F --item d--> E[path 'ef', inclusion proof for leaf '...abcdef']
+```
+
+-----
+
+A different case:
+```mermaid
+flowchart TD
+    A[some traversal ...] --> B[branch node A] --item c--> F[branch node B]
+    A --> N[Some node]
+    F --item 1--> C[extension '2345'] --> D[branch node C]
+    F --item d--> E[path 'ef', inclusion proof for leaf '...abcdef']
+```
+
+
+In this case, branch node B will only have one item and must be removed.
+The extension now absorbs the extra '1' part of the path:
+
+```mermaid
+flowchart TD
+    C[extension '12345']
+    A[some traversal ...] --> B[branch node A] --item c--> C
+    A --> N[Some node]
+    C --> D[branch node C]
+```
+
+
+
+----
+
+A case with no extensions:
+
+```mermaid
+flowchart TD
+    A[some traversal ...] --> B[extension node 'abc'] --> F[branch node B]
+    A --> N[Some node]
+    F --item 1--> D[branch node C]
+    D --item 2--> X[leaf 345]
+    D --item 5 --> Y[leaf 555]
+    F --item d--> E[path 'ef', inclusion proof for leaf '...abcdef']
+```
+
+The Branch node B is removed, so the extension gains the '1'
+
+```mermaid
+flowchart TD
+    A[some traversal ...] --> B[extension node 'abc1'] --> D
+    A --> N[Some node]
+    D[branch node C]
+    D --item 2--> X[leaf 345]
+    D --item 5 --> Y[leaf 555]
+```
+
+Pattern EBB -> E+BB
