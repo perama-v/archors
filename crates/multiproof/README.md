@@ -5,6 +5,10 @@ Combine multple EIP-1186 proofs rooted in the same block.
 This allows the state root to be updated using state changes that occur
 due to transactions in that block.
 
+
+> 🚧 Blocker: For some key deletions, there is insufficient data to construct
+the new root.
+
 ## Why
 
 If one has a collection of proofs that cover all state for a block, then updating
