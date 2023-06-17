@@ -159,7 +159,7 @@ Make a modification (see above). Then when recalculate the hashes all the way to
 any key.
 
 
-### Editing proofs
+## Editing proofs
 
 A change the the proof structure may be required to get the post-block state root.
 For example: If a key is not in the trie, and is added during the block, then it
@@ -169,7 +169,7 @@ Exclusion proof for path ...abcdef
 
 ```mermaid
 flowchart TD
-    A[some traversal ...] --> B[extension 'abc12345'] --> C[branch node]
+    A[some traversal ...] --> B[extension 'abc12345'] --> C[branch B]
     B -.- E[Exclusion proof for key `...abcdef`]
 ```
 
@@ -178,17 +178,30 @@ node is added:
 
 ```mermaid
 flowchart TD
-    A[some traversal ...] --> B[extension 'abc'] --> F[branch]
-    F --item 1--> C[extension '2345'] --> D[branch node]
+    A[some traversal ...] --> B[extension 'abc'] --> F[branch A]
+    F --item 1--> C[extension '2345'] --> D[branch B]
     F --item d--> E[path 'ef', inclusion proof for leaf '...abcdef']
 ```
 
-### Proof edits with tree depth reduction
-
-> 🚧 Blocker
+## Proof edits with tree depth reduction: Extension fetching
 
 If there is an inclusion proof that is converted to an exclusion proof, this
 may result in a removal of some internal nodes.
+
+In some cases, this requires knowledge of nodes where only the hash(node) is present.
+These cases have the property:
+- The leaf has only one sibling node
+- The sibling node is an extension
+
+In a trio (grandparent-parent-sibling):
+- EBE & BBE: Additional data required.
+    - EBE -> E
+    - BBE -> BE
+- EBB & BBB: No additional data required.
+    - EBE -> EB
+    - BBB -> BEB
+
+### Pattern: Extension-Branch-Extension to Extension
 
 Suppose the deletion of key ...abcdef
 
@@ -215,14 +228,24 @@ so it is not known what path to combine with the 'abc1' path.
 
 ```mermaid
 flowchart TD
-    A[some traversal ...] --> B[extension 'abc'] --> F[branch A]
-    F --item 1--> C[hash of extension '2345']
+    A[some traversal in block n - 1...] --> B[extension 'abc'] --> F[branch A]
+    F -.item 1.-> C[hash of extension '2345']
     F --item d--> E[path 'ef', inclusion proof for leaf '...abcdef']
 ```
+Resolution: This scenario can be anticipated and the node can be made part of the
+data required for block `n`. Here the absence of the key in the next block is
+identified and an exclusion proof obtained via `eth_getProof`. Let's call this
+method "extension-fetching"
 
------
+```mermaid
+flowchart TD
+    A[some traversal in block n...] --> B[extension 'abc12345']
+    B -.-> E[exclusion proof for path '...abcdef']
+```
 
-A different case:
+### Pattern: Branch-Branch-Extension to Branch-Extension
+
+This is a different trie structure that results in the same situation.
 ```mermaid
 flowchart TD
     A[some traversal ...] --> B[branch node A] --item c--> F[branch node B]
@@ -233,7 +256,8 @@ flowchart TD
 
 
 In this case, branch node B will only have one item and must be removed.
-The extension now absorbs the extra '1' part of the path:
+The extension now absorbs the extra '1' part of the path. As above, this
+requires extension fetching.
 
 ```mermaid
 flowchart TD
@@ -243,11 +267,12 @@ flowchart TD
     C --> D[branch node C]
 ```
 
+Pattern: BBE -> BE+
 
 
-----
+### Pattern: Extension-Branch-Branch to Extension-Branch
 
-A case with no extensions:
+This is a a trie structure where the sibling is a branch. This does not require special additional knowledge.
 
 ```mermaid
 flowchart TD
@@ -270,4 +295,41 @@ flowchart TD
     D --item 5 --> Y[leaf 555]
 ```
 
-Pattern EBB -> E+BB
+Pattern EBB -> E+B
+
+
+### Pattern: Branch-Branch-Branch
+
+
+This is a trie structure where the sibling is a branch and so is the grandparent.
+This does not require special additional knowledge.
+
+```mermaid
+flowchart TD
+    T[some traversal ...] --item a--> A
+    A[branch node] --item b--> B[branch node] --item c--> F[branch node B]
+    A --> N[Some node]
+    B --> G[Some node]
+    F --item 1--> D[branch node C]
+    D --item 2--> X[leaf 345]
+    D --item 5 --> Y[leaf 555]
+    F --item d--> E[path 'ef', inclusion proof for leaf '...abcdef']
+```
+
+The Branch node B is removed, and itself has a siblings, so it is turned into a single
+nibble extension '1'.
+
+```mermaid
+flowchart TD
+    T[some traversal ...] --item a--> A
+    A[branch node] --item b--> B[branch node] --item c--> F[extension '1']
+    A --> N[Some node]
+    B --> G[Some node]
+    F --> D[branch node C]
+    D --item 2--> X[leaf 345]
+    D --item 5 --> Y[leaf 555]
+```
+
+
+Pattern BBB -> BEB
+
