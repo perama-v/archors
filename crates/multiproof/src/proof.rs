@@ -9,6 +9,7 @@ use archors_verify::path::{
     PrefixEncoding, TargetNodeEncoding,
 };
 use ethers::{
+    prelude::k256::sha2::digest::typenum::Mod,
     types::{Bytes, H256},
     utils::keccak256,
 };
@@ -59,12 +60,16 @@ pub enum ProofError {
 
 #[derive(Debug, Error)]
 pub enum ModifyError {
+    #[error("Unable to find only child in branch requiring deletion")]
+    AbsentOnlyChild,
     #[error("Branch node to few items")]
     BranchTooShort,
     #[error("Leaf node has no final path")]
     LeafHasNoFinalPath,
     #[error("The visited nodes list is empty")]
     NoVisitedNodes,
+    #[error("The visited node in question is absent")]
+    NoVisitedNode,
     #[error("Unable to retrieve node using node hash")]
     NoNodeForHash,
     #[error("Extension node has no final path")]
@@ -79,6 +84,10 @@ pub enum ModifyError {
     PathEndedAtBranch,
     #[error("Node path was not long enough to split")]
     NodePathTooShort,
+    #[error("Branch item indicies must not exceed 15")]
+    TooManyBranchItems,
+    #[error("Branch item (0-15) must be 32 bytes")]
+    BranchItemInvalidLength,
 }
 /// A representation of a Merkle PATRICIA Trie Multi Proof.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -397,104 +406,16 @@ impl MultiProof {
             Change::LeafInclusionToExclusion => {
                 // 1. Whenever there is branch with 2 items and one is removed,
                 // the branch must be removed.
-                // 2. Look at parent
-                //   - If an extension is next remove that
-                //   - If a branch is next, go to 1.
+                // 2. Look at the parent of the (now deleted) branch
+                //   - If extension, remove that
+                //   - If branch, go to 1.
 
-                // - branch (delete if only has one item)
-                //   - extension (delete)
-                //     - branch (delete)
-                //       - deleting leaf
-                //       - sibling leaf
-
-                // - branch
-                //   - extension
-                //     - branch (stays)
-                //       - deleting leaf
-                //       - sibling leaf A
-                //       - sibling leaf B
-
-                let mut nodes_processed = 1;
-                let mut updated_hash: [u8; 32];
-
-                // Perform removal of elements as long as necessary.
-                for visited in visited.iter().rev().skip(1) {
-                    nodes_processed += 1;
-                    let outdated_rlp = self
-                        .data
-                        .remove(&visited.node_hash)
-                        .ok_or(ModifyError::NoNodeForHash)?;
-                    let outdated_node: Vec<Vec<u8>> = rlp::decode_list(&outdated_rlp);
-                    match visited.kind {
-                        NodeKind::Branch => {
-                            // [next_node_0, ..., next_node_16, value]
-                            let mut updated = Node::default();
-                            let mut item_count = 0;
-                            for (index, item) in outdated_node.into_iter().enumerate() {
-                                if index == visited.item_index {
-                                    // Erase child
-                                    updated.0.push(Item(vec![]));
-                                } else {
-                                    if !item.is_empty() {
-                                        item_count += 1;
-                                    }
-                                    updated.0.push(Item(item));
-                                }
-                            }
-
-                            match item_count {
-                                0 => todo!("error, not possible"),
-                                1 => {
-                                    // Branch node for deletion.
-                                    // Need to attach this single item at some point.
-
-                                    // - Leaf: aggregate path as parents are deleted.
-                                    todo!("leaf");
-                                    // - Branch:
-                                    todo!("branch");
-                                    // - Extension: If the branch being deleted has a parent
-                                    // extension and a single child extension, it must be removed
-                                    // and the two extensions combined. However this does not
-                                    // appear possible (the child extension rlp data is not present
-                                    // in the proof.)
-                                    todo!("extension");
-
-
-
-
-                                    // May still need to delete parents, so this leaf
-                                    // path may get longer.
-                                    todo!()
-                                },
-                                _ => {
-                                    let updated_rlp = updated.rlp_bytes().to_vec();
-                                    let updated_node_hash = keccak256(&updated_rlp);
-                                    self.data.insert(updated_hash.into(), updated_rlp);
-                                    updated_hash = updated_node_hash;
-                                    // No further deletions required.
-                                    break
-                                }
-                            }
-                        }
-                        NodeKind::Extension => {
-                            // This is an extension node, with a deleted child (branch).
-                            // Need to
-
-
-                            let path = outdated_node
-                                .first()
-                                .ok_or(ModifyError::ExtensionHasNoPath)?;
-                            // [path, next_node]
-                            Node::from(vec![path.to_owned(), child_hash.to_vec()]);
-
-                            todo!()
-                        }
-                        NodeKind::Leaf => todo!(),
-                    };
-                    todo!()
-                }
+                // Perform updates requiring structural changes to the trie.
+                let (highest_hash, nodes_processed) =
+                    self.process_child_removal(visited, visited.len() - 1)?;
 
                 // Now just perform simple hash updates.
+                let mut updated_hash = highest_hash;
                 for outdated in visited.iter().rev().skip(nodes_processed) {
                     updated_hash = self.update_node_with_child_hash(outdated, &updated_hash)?;
                 }
@@ -523,12 +444,28 @@ impl MultiProof {
             NodeKind::Branch => {
                 // [next_node_0, ..., next_node_16, value]
                 let mut updated = Node::default();
+                let mut child_count = 0;
                 for (index, item) in outdated_node.into_iter().enumerate() {
                     if index == visited.item_index {
                         updated.0.push(Item(child_hash.to_vec()));
+                        child_count += 1;
                     } else {
+                        if !item.is_empty() {
+                            child_count += 1;
+                        }
                         updated.0.push(Item(item));
                     }
+                }
+                // Branch cannot be removed if there is an only-child sibling extension awaiting
+                // an update in a later EVM operation. In this case the child hash is passed as
+                // an empty array.
+                let can_remove_branch = child_hash != &[0u8; 32];
+                if child_count == 1 && can_remove_branch {
+                    // This node must be removed because it has one child.
+                    // It was not updated earlier because it was waiting on this child hash.
+
+                    todo!("Remove the node, modify the child +/- its parent")
+                    // Use the child (an extension node) hash to get the child.
                 }
                 updated
             }
@@ -641,6 +578,175 @@ impl MultiProof {
             self.data
                 .insert(common_extension_hash.into(), common_extension.into());
             return Ok(common_extension_hash);
+        }
+    }
+    /// Modifies a (parent) node with a removed child. Returns the hash of the
+    /// modified node and it's position in the traversal.
+    ///
+    /// The terms grandparent, parent and sibling all are iwth respect to the removed child.
+    ///
+    /// Visited refers to nodes traversed (root to leaf) and visiting refers to the index
+    /// of the node that is the parent.
+    fn process_child_removal(
+        &mut self,
+        visit_record: &[VisitedNode],
+        visit_index: usize,
+    ) -> Result<([u8; 32], usize), ModifyError> {
+        let mut node_index = visit_index;
+        if node_index == 0 {
+            todo!("handle modification when no grandparent exists");
+        }
+
+        // Perform removal of elements as long as necessary.
+        loop {
+            let visited = visit_record
+                .get(node_index)
+                .ok_or(ModifyError::NoVisitedNode)?;
+            let outdated_rlp = self
+                .data
+                .remove(&visited.node_hash)
+                .ok_or(ModifyError::NoNodeForHash)?;
+            let outdated_node: Vec<Vec<u8>> = rlp::decode_list(&outdated_rlp);
+
+            match visited.kind {
+                NodeKind::Branch => {
+                    // [next_node_0, ..., next_node_16, value]
+                    let mut updated = Node::default();
+                    let mut item_count = 0;
+                    let mut non_empty_child_index = 0;
+                    for (index, item) in outdated_node.into_iter().enumerate() {
+                        if index == visited.item_index {
+                            // Erase child
+                            updated.0.push(Item(vec![]));
+                        } else {
+                            if !item.is_empty() {
+                                item_count += 1;
+                                non_empty_child_index = index;
+                            }
+                            updated.0.push(Item(item));
+                        }
+                    }
+
+                    match item_count {
+                        0 => todo!("error, not possible"),
+                        1 => {
+                            // Branch node for deletion.
+                            // Need to attach this single item at some point.
+
+                            let visited_grandparent = visit_record
+                                .get(node_index - 1)
+                                .ok_or(ModifyError::NoVisitedNode)?;
+
+                            let only_child_nibble: u8 = non_empty_child_index
+                                .try_into()
+                                .map_err(|_| ModifyError::TooManyBranchItems)?;
+
+                            let non_empty_child_hash = updated
+                                .0
+                                .get(non_empty_child_index)
+                                .ok_or(ModifyError::AbsentOnlyChild)?;
+
+                            self.resolve_child_and_grandparent_paths(
+                                &non_empty_child_hash.0,
+                                only_child_nibble,
+                                &visited_grandparent.node_hash.0,
+                            )?;
+
+                            // May still need to delete parents, so this leaf
+                            // path may get longer.
+                            todo!()
+                        }
+                        _ => {
+                            let updated_rlp = updated.rlp_bytes().to_vec();
+                            let updated_node_hash = keccak256(&updated_rlp);
+                            self.data.insert(updated_node_hash.into(), updated_rlp);
+                            // No further deletions required.
+                            return Ok((updated_node_hash, node_index));
+                        }
+                    }
+                }
+                NodeKind::Extension => {
+                    // This is an extension node, with a deleted child (branch).
+
+                    let path = outdated_node
+                        .first()
+                        .ok_or(ModifyError::ExtensionHasNoPath)?;
+                    // [path, next_node]
+                    // Node::from(vec![path.to_owned(), child_hash.to_vec()]);
+
+                    todo!()
+                }
+                NodeKind::Leaf => todo!(),
+            };
+            node_index += 1;
+        }
+        unreachable!()
+    }
+    /// When the trie is altered and a parent is removed, the nodes above (grandparent) and
+    /// below (only child) are modified to have a correct path.
+    ///
+    /// The nodes are created and updated and the hash of the node closest to the root is
+    /// returned.
+    ///
+    /// The child was previously on a branch with a specific nibble.
+    fn resolve_child_and_grandparent_paths(
+        &mut self,
+        only_child_hash: &[u8],
+        only_child_nibble: u8,
+        grandparent_hash: &[u8; 32],
+    ) -> Result<[u8; 32], ModifyError> {
+        // Deduce the node kind for the child and grandparent
+
+        // For each combination, compute the new paths / nodes
+
+        let grandparent_rlp = self
+            .data
+            .get(&grandparent_hash.into())
+            .ok_or(ModifyError::NoNodeForHash)?;
+        let grandparent_node: Vec<Vec<u8>> = rlp::decode_list(&grandparent_rlp);
+
+        let hash: H256 = H256::from_slice(only_child_hash);
+        let only_child_rlp: Vec<u8> = match self.data.get(&hash){
+            Some(node) => {
+                // Not likely - this is data outside the path of this key.
+                todo!();
+            },
+            None => {
+
+                todo!("sibling fetching here")
+            },
+        };
+        let only_child_node: Vec<Vec<u8>> = rlp::decode_list(&only_child_rlp);
+
+        let child: NodeKind = todo!();
+        let grandparent: NodeKind = todo!();
+
+        match (child, grandparent) {
+            (NodeKind::Branch, NodeKind::Branch) => {
+                // Add an extension above the sibling. Make the sibling branch index the extension path.
+                todo!()
+            }
+            (NodeKind::Branch, NodeKind::Extension) => {
+                // Add sibling branch index to grandparent extension.
+                todo!()
+            }
+            (NodeKind::Extension, NodeKind::Branch) => {
+                // Add sibling branch index to sibling extension. Requires knowledge of sibling node.
+                todo!()
+            }
+            (NodeKind::Extension, NodeKind::Extension) => {
+                // Remove grandparent extension. Add sibling branch index and grandparent extension to sibling extension. Requires knowledge of sibling node.
+                todo!()
+            }
+            (NodeKind::Leaf, NodeKind::Branch) => {
+                // Add sibling branch index to sibling leaf path. Requires knowledge of sibling node.
+                todo!()
+            }
+            (NodeKind::Leaf, NodeKind::Extension) => {
+                // Remove grandparent extension, add sibling branch index and grandparent extension path to sibling leaf path. Requires knowledge of sibling node.
+                todo!()
+            }
+            (_, NodeKind::Leaf) => todo!("error, grandparent cannot be leaf"),
         }
     }
 }
