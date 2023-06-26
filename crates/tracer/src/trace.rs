@@ -6,7 +6,7 @@ use thiserror::Error;
 
 use crate::{
     evm::{BlockEvm, EvmError},
-    state::{build_state_from_proofs, CompleteAccounts, StateError},
+    state::{build_state_from_proofs, BlockHashes, CompleteAccounts, StateError},
     utils::UtilsError,
 };
 
@@ -35,11 +35,11 @@ impl BlockExecutor {
     /// Loads the tracer so that it is ready to trace a block.
     pub fn load<T>(block: Block<Transaction>, block_proofs: T) -> Result<Self, TraceError>
     where
-        T: CompleteAccounts,
+        T: CompleteAccounts + BlockHashes,
     {
         // For all important states, load into db.
-        let cache_db = build_state_from_proofs(&block_proofs)?;
-
+        let mut cache_db = build_state_from_proofs(&block_proofs)?;
+        cache_db.block_hashes = block_proofs.get_blockhash_accesses()?;
         let mut block_evm = BlockEvm::init_from_db(cache_db);
         block_evm
             .add_chain_id(U256::from(1))
@@ -108,6 +108,7 @@ mod test {
         let mut state = BlockProofsBasic {
             proofs: HashMap::default(),
             code: HashMap::default(),
+            block_hashes: HashMap::default(),
         };
         let mut proof = EIP1186ProofResponse::default();
         let address = H160::from_str("0x0300000000000000000000000000000000000000").unwrap();
