@@ -9,3 +9,6 @@ Cargo.lock
 
 # longer example series
 /data/blocks/1737*
+
+# trace demo
+/data/blocks/1753*
