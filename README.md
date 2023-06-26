@@ -411,3 +411,183 @@ program counters 2080, 8672, 17898. One could create a parser that:
   "opName": "REVERT"
 }
 ```
+
+
+## BLOCKHASH opcode
+
+The BLOCKHASH opcode is state that is not in the block but is accessible to the EVM.
+
+Filtering for this opcode, we can see that it is used in transaction index 204 in block 17190873.
+```jq
+{
+  "pc": 3398,
+  "op": 64,
+  "gas": "0x1ad74",
+  "gasCost": "0x14",
+  "memSize": 2304,
+  "stack": [
+    "0xd0f89344",
+    "0x262",
+    "0x5bf605d",
+    "0x33",
+    "0x7",
+    "0x7f",
+    "0x31",
+    "0x54c16",
+    "0x880",
+    "0x2",
+    "0x64544dd5",
+    "0x1064fa6",
+    "0xd5b",
+    "0x1064fd8"
+  ],
+  "depth": 1,
+  "opName": "BLOCKHASH"
+}
+```
+Here we see BLOCKHASH pop the 0x1064fd8 (17190872) from top of the stack. The EVM expects
+to be provided with the block hash of block 17190872, which is the block immediately prior
+to the block being traced (17190873). That value is:
+`0x573471736fea190c6fd49db2c40add79c9904ed92eea6b68f5f2490ff2ae7939`.
+
+
+This value must be provided to the EVM. For example if using REVM then the environment
+can store a map of blocknumber -> blockhash. So before starting the block trace, this
+map can be populated by the block hashes that the EVM will need.
+
+There are two approaches:
+- Asynchronous tracing: When BLOCKHASH opcode is encountered, fetch it from the network. This
+is not ideal because it can slow down tracing (e.g. 256 sequential network requests in the worst
+case).
+- Prepopulated, verifiable, data: Precompute what blockhashes are needed and include those with
+the accessed state proofs for each block.
+
+How do we know what will be required until the trace has completed? Well, essentially we can
+foreshadow these accesses, just like we did for the state. Suppose only one block hash is
+accessed. That can be provided in the data alonside the state proof, without including the other
+255 block hashes that could have been read.
+
+Threats to trustless tracing:
+- A block hash for a different block is required: the EVM can throw an error "tried to read
+blockhash, none found"
+- A block hash is wrong: the portal node can audit all block hashes against its master accumulator
+prior to tracing.
+- Block hashes included that are not read: This can be audited by tracing the block, and if this
+is skipped is capped at a bloat of 256 hashes.
+
+### BLOCKHASH mapping construction
+
+Start tracing a block - every time a BLOCKHASH opcode is encountered, record it. The
+opcode may affect subsequent EVM operations, so it must be provided before proceeding.
+Hence, while building this BLOCKHASH mapping the approach can be either:
+- Trace using the local proof and asynchronous fetching blockhashes from a node as required.
+- Trace using the same archive node used to construct the state proofs.
+`eth_traceBlock | grep "BLOCKHASH" -A 1` will get the next EVM step, which now has the
+block hash at the top of the stack. These can be parsed and stored.
+
+
+Block traces can be filtered and the last element in the stack reveals the block
+number and subsequent block hash.
+```
+curl -X POST -H "Content-Type: application/json" --data '{"jsonrpc": "2.0", "method": "debug_traceBlockByNumber", "params": ["17539445"], "id":1}' http://127.0.0.1:8545 \
+    | grep -o '{[^}]*}' \
+    | grep "BLOCKHASH" -A 1 \
+    | grep -v '^--$' \
+    | jq -r '(.stack | last)' \
+    | awk '{getline second; print "{\"block_number\": \"" $0 "\", \"block_hash\": \"" second "\"}"}' \
+    | jq -s '{"blockhash_accesses": .}' > blockhash_opcode_use.json
+```
+Resulting pairs of block number / block hashes:
+```json
+{
+  "blockhash_accesses": [
+    {
+      "block_number": "0x10ba170",
+      "block_hash": "0xc9abf101b4e600b1aa2952007e6532bb153462dd9ac8636f53c07afb2eaee78f"
+    },
+    {
+      "block_number": "0x10ba16f",
+      "block_hash": "0x1d67f61e2ab228e5e7bf28605a644490c54b33a20c434bdc1d334f4ef081c781"
+    }
+  ]
+}
+```
+
+### BLOCKHASH mapping use
+
+The block hash mapping can be bundled with the state proof for the block. That way, it may be
+passed to a peer who can verify against the accumulator that the hashes are canonical
+before tracing.
+
+In `revm`, the in-memory db has a [blockhash map](https://github.com/bluealloy/revm/blob/main/crates/revm/src/db/in_memory_db.rs#L35) that we can set before using the EVM.
+
+Using `executor.trace_transaction(204)?;` with block 17190873 in example 9, we can now see that
+the BLOCKHASH opcode is used to access the blockhash from the prior block (17190872)
+
+```command
+cargo run --release --example 09_use_proof | grep "BLOCKHASH" -A 1 | jq
+```
+See that the EVM now has the correct hash `0x5734...7939` at the top of the stack after the
+`DIFFICULTY` opcode was called.
+```json
+{
+  "pc": 3398,
+  "op": 64,
+  "gas": "0x1ad74",
+  "gasCost": "0x14",
+  "memSize": 2304,
+  "stack": [
+    "0xd0f89344",
+    "0x262",
+    "0x5bf605d",
+    "0x33",
+    "0x7",
+    "0x7f",
+    "0x31",
+    "0x54c16",
+    "0x880",
+    "0x2",
+    "0x64544dd5",
+    "0x1064fa6",
+    "0xd5b",
+    "0x1064fd8"
+  ],
+  "depth": 1,
+  "opName": "BLOCKHASH"
+}
+{
+  "pc": 3399,
+  "op": 138,
+  "gas": "0x1ad60",
+  "gasCost": "0x3",
+  "memSize": 2304,
+  "stack": [
+    "0xd0f89344",
+    "0x262",
+    "0x5bf605d",
+    "0x33",
+    "0x7",
+    "0x7f",
+    "0x31",
+    "0x54c16",
+    "0x880",
+    "0x2",
+    "0x64544dd5",
+    "0x1064fa6",
+    "0xd5b",
+    "0x573471736fea190c6fd49db2c40add79c9904ed92eea6b68f5f2490ff2ae7939"
+  ],
+  "depth": 1,
+  "opName": "DUP11"
+}
+```
+
+
+### Future considerations
+
+Like BLOCKHASH, `EIP-4788: Beacon block root in the EVM` is an opcode that allows
+the EVM to read state that is presumed available to the executor.
+
+If this EIP is included, this data should be included alongside BLOCKHASH data. That is,
+trace the block, search for the opcode and add beacon roots to the bundle that is passed
+to a peer. They can verify the canonicality of those roots prior to EVM execution.
