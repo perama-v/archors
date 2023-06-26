@@ -2,16 +2,18 @@ use std::env;
 
 use anyhow::Result;
 use archors_inventory::{
-    cache::{ get_block_from_cache, get_transferrable_proofs_from_cache,
-    },
-    overlap::measure_proof_overlap, utils::compress,
+    cache::{get_block_from_cache, get_transferrable_proofs_from_cache},
+    overlap::measure_proof_overlap,
+    utils::compress,
 };
 
 /// Request and store a block for later use.
 #[tokio::main]
 async fn main() -> Result<()> {
     let blocks = vec![
-        17370975, 17370925, 17370875, 17370825, 17370775, 17370725, 17370675, 17370625, 17370575, 17370525, 17370475, 17370425, 17370375, 17370325, 17370275, 17370225, 17370175, 17370125, 17370075, 17370025,
+        17370975, 17370925, 17370875, 17370825, 17370775, 17370725, 17370675, 17370625, 17370575,
+        17370525, 17370475, 17370425, 17370375, 17370325, 17370275, 17370225, 17370175, 17370125,
+        17370075, 17370025,
     ];
     let blocks: Vec<u64> = blocks.into_iter().rev().collect();
     println!("|block number|block gas|block .ssz_snappy p2p wire|block wire per gas|block .ssz disk| block disk per gas|block count|cumulative sum duplicate discardable data|percentage disk saved");
@@ -41,9 +43,10 @@ async fn main() -> Result<()> {
         let snappy_kb_per_mgas = 1000 * snappy_size_kb / kgas;
         total_snappy_kb_per_mgas += snappy_kb_per_mgas;
 
-        total_data_saved_kb = measure_proof_overlap(blocks[..=i].to_owned())?.total_savings() / 1000;
+        total_data_saved_kb =
+            measure_proof_overlap(blocks[..=i].to_owned())?.total_savings() / 1000;
         let percentage_saved = 100 * total_data_saved_kb / total_ssz_disk_kb;
-        let count = i+1;
+        let count = i + 1;
 
         let mgas = kgas / 1000;
         println!("|{block_num}|{mgas} Mgas|{snappy_size_kb} kB|{snappy_kb_per_mgas} KB/Mgas|{ssz_size_kb} KB|{ssz_kb_per_mgas} KB/Mgas|{count}|{total_data_saved_kb} kB|{percentage_saved}%|");
