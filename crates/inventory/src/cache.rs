@@ -7,7 +7,7 @@ use std::{
 };
 
 use ethers::{
-    types::{Block, Transaction, H160, H256},
+    types::{Block, Transaction, H160, H256, U64},
     utils::keccak256,
 };
 use reqwest::Client;
@@ -20,7 +20,7 @@ use crate::{
         BlockPrestateInnerTx, BlockPrestateResponse, BlockResponse,
     },
     transferrable::{SlimBlockStateProof, TransferrableError},
-    types::{BlockProofs, BlockStateAccesses},
+    types::{BlockHashAccesses, BlockProofs, BlockStateAccesses},
     utils::{compress, hex_decode, UtilsError},
 };
 
@@ -241,6 +241,19 @@ pub fn get_block_from_cache(block: u64) -> Result<Block<Transaction>, CacheError
     Ok(block)
 }
 
+/// Retrieves all BLOCKHASH use values for a single block.
+pub fn get_blockhashes_from_cache(block: u64) -> Result<HashMap<U64, H256>, CacheError> {
+    let blockhash_path = CacheFileNames::new(block).blockhashes();
+    let file = File::open(blockhash_path)?;
+    let reader = BufReader::new(file);
+    let accesses: BlockHashAccesses = serde_json::from_reader(reader)?;
+    let mut map = HashMap::new();
+    for access in accesses.blockhash_accesses {
+        map.insert(access.block_number, access.block_hash);
+    }
+    Ok(map)
+}
+
 pub(crate) type ContractBytes = Vec<u8>;
 
 /// Retrieves the contract code for a particular cached block.
@@ -297,5 +310,8 @@ impl CacheFileNames {
     }
     fn block_with_transactions(&self) -> PathBuf {
         self.dirname().join("block_with_transactions.json")
+    }
+    fn blockhashes(&self) -> PathBuf {
+        self.dirname().join("blockhash_opcode_use.json")
     }
 }

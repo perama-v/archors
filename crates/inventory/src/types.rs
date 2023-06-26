@@ -1,7 +1,7 @@
 use std::{collections::HashMap, fmt::Display};
 
 // use archors_verify::eip1186::{verify_proof, VerifyProofError};
-use ethers::types::{EIP1186ProofResponse, H160, H256};
+use ethers::types::{EIP1186ProofResponse, H160, H256, U64};
 use serde::{Deserialize, Serialize};
 
 /// Helper for caching
@@ -15,6 +15,20 @@ pub struct BlockProofs {
 pub struct BasicBlockState {
     pub state_root: H256,
     pub transactions: Vec<H256>,
+}
+
+/// BLOCKASH opcode use for a whole block, obtained by tracing a node and filtering
+/// for the the opcode.
+#[derive(Deserialize, Serialize)]
+pub struct BlockHashAccesses {
+    pub blockhash_accesses: Vec<BlockHashAccess>,
+}
+
+/// Single BLOCKASH opcode use.
+#[derive(Deserialize, Serialize)]
+pub struct BlockHashAccess {
+    pub block_number: U64,
+    pub block_hash: H256,
 }
 
 /// Prestate tracer for all transactions in a block, as returned by
