@@ -104,7 +104,7 @@ mod test {
     /// Values are set for an account, transactions are created and then
     /// applied by running the EVM.
     #[test]
-    fn test_trace_block() {
+    fn test_trace_block_composable() {
         let mut state = BlockProofsBasic {
             proofs: HashMap::default(),
             code: HashMap::default(),
@@ -119,24 +119,25 @@ mod test {
         .unwrap();
         state.proofs.insert(address, proof);
 
-        let mut block: Block<Transaction> = Block::default();
-        let mut tx = Transaction::default();
-        tx.from = address;
-        tx.to = Some(H160::from_str("0x0200000000000000000000000000000000000000").unwrap());
-        // Enough balance (succeeds)
-        tx.value = ethers::types::U256::from_str(
-            "0x0000000000000000000000000000000000000000000000000000000000000009",
-        )
-        .unwrap();
-        block.transactions.push(tx.clone());
-        // Not enough balance (fails): LackOfFundForMaxFee
-        tx.value = ethers::types::U256::from_str(
-            "0x0000000000000000000000900000000000000000000000000000000000000000",
-        )
-        .unwrap();
+        let mut block: Block<Transaction> = Block {
+            author: Some(H160::default()),
+            number: Some(10_000_000.into()),
+            ..Default::default()
+        };
+        let tx = Transaction {
+            from: address,
+            to: Some(H160::from_str("0x0200000000000000000000000000000000000000").unwrap()),
+            value: ethers::types::U256::from_str(
+                "0x0000000000000000000000000000000000000000000000000000000000000009",
+            )
+            .unwrap(),
+            gas_price: Some(ethers::types::U256::default()),
+            ..Default::default()
+        };
+
         block.transactions.push(tx);
-        // Trace fails due to the failing transaction.
-        let mut executor = BlockExecutor::load(block, state).unwrap();
+        let executor = BlockExecutor::load(block, state).unwrap();
+        // The dummy block should not successfully execute.
         assert!(executor.trace_block().is_err());
     }
 

@@ -16,6 +16,8 @@ use crate::{
 
 #[derive(Debug, Error)]
 pub enum ProofError {
+    #[error("Branch does not have enough items")]
+    BranchItemMissing,
     #[error("Branch node (non-terminal) has value, expected none")]
     BranchNodeHasValue,
     #[error("Parent nodes (rlp: {parent}) do not contain hash of rlp(child) (hash: {child}")]
@@ -60,64 +62,42 @@ pub enum ProofError {
 
 /// A proof for some data in a Merkle Patricia Tree, such as an account, or a storage value.
 #[derive(Default, Debug, Clone, PartialEq, Eq, Deserialize)]
-struct SingleProofPath {
+pub struct SingleProof {
     /// Merkle PATRICIA trie proof for a key/value.
-    proof: Vec<Bytes>,
+    pub proof: Vec<Bytes>,
     /// Trusted root that the proof anchors to.
-    root: [u8; 32],
+    pub root: [u8; 32],
     /// Anticipated trie path to traverse for the proof.
-    path: [u8; 32],
+    pub path: [u8; 32],
     /// Claimed value to be proven. E.g., RLP(account), or RLP(storage_value)
-    claimed_value: Vec<u8>,
+    pub claimed_value: Vec<u8>,
 }
 
-/// Holds information useful during a proof verification.
-pub struct Verifier {
-    data: SingleProofPath,
-}
-
-impl Verifier {
-    pub fn new_single_proof(
-        proof: Vec<Bytes>,
-        root: [u8; 32],
-        path: [u8; 32],
-        claimed_value: Vec<u8>,
-    ) -> Self {
-        Verifier {
-            data: SingleProofPath {
-                proof,
-                root,
-                path,
-                claimed_value,
-            },
-        }
-    }
+impl SingleProof {
     pub fn verify(&self) -> Result<Verified, ProofError> {
-        // Traverse path
-        let total_nodes = self.data.proof.len();
-        if total_nodes == 0 {
+        if self.proof.is_empty() {
             return Err(ProofError::EmptyProof);
         }
-        let mut traversal = NibblePath::init(&self.data.path);
-        let mut parent_hash = self.data.root;
+        let mut traversal = NibblePath::init(&self.path);
+        let mut parent_hash = self.root;
 
-        for (node_index, rlp_node) in self.data.proof.iter().enumerate() {
+        for (node_index, rlp_node) in self.proof.iter().enumerate() {
             node_hash_correct(&rlp_node.0, parent_hash)?;
 
             let node: Vec<Vec<u8>> = rlp::decode_list(&rlp_node.0);
 
-            let proof_type = NodeKind::deduce(node_index, total_nodes, node.len(), &node)
+            let proof_type = NodeKind::deduce(&node)
                 .map_err(|source| ProofError::NodeError { source, node_index })?
                 .traverse_node(node, &mut traversal, &mut parent_hash)
                 .map_err(|source| ProofError::NodeError { source, node_index })?;
 
-            let verification = proof_type.get_verification_of_value(&self.data.claimed_value)?;
+            let verification = proof_type.get_verification_of_value(&self.claimed_value)?;
 
             if let Some(verified) = verification {
                 return Ok(verified);
             }
         }
-        // If end up with a value ensure it equals self.data.value
+        // If end up with a value ensure it equals self.value
         Err(ProofError::FailedToHandleFinalNode)
     }
 }

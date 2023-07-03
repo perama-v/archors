@@ -10,7 +10,7 @@ use serde::Deserialize;
 use thiserror::Error;
 
 use crate::{
-    proof::{ProofError, Verified, Verifier},
+    proof::{ProofError, SingleProof, Verified},
     utils::hex_encode,
 };
 
@@ -108,12 +108,12 @@ pub fn verify_account_component(
         code_hash: proof.code_hash,
     };
 
-    let account_prover = Verifier::new_single_proof(
-        proof.account_proof.clone(),
-        H256::from_slice(block_state_root).0,
-        keccak256(proof.address.as_bytes()),
-        rlp::encode(&claimed_account).to_vec(),
-    );
+    let account_prover = SingleProof {
+        proof: proof.account_proof.clone(),
+        root: H256::from_slice(block_state_root).0,
+        path: keccak256(proof.address.as_bytes()),
+        claimed_value: rlp::encode(&claimed_account).to_vec(),
+    };
 
     match account_prover.verify()? {
         Verified::Inclusion => {
@@ -136,13 +136,12 @@ fn verify_account_storage_component(
 ) -> Result<(), StorageError> {
     // let claimed_storage = Storage(storage_proof.value);
     let claimed_value = storage_proof.value;
-
-    let storage_prover = Verifier::new_single_proof(
-        storage_proof.proof,
-        *storage_hash,
-        keccak256(storage_proof.key),
-        rlp::encode(&claimed_value).to_vec(),
-    );
+    let storage_prover = SingleProof {
+        proof: storage_proof.proof,
+        root: *storage_hash,
+        path: keccak256(storage_proof.key),
+        claimed_value: rlp::encode(&claimed_value).to_vec(),
+    };
 
     match storage_prover.verify()? {
         Verified::Inclusion => {
