@@ -5,5 +5,7 @@ use archors_inventory::cache::store_block_prestate_tracer;
 #[tokio::main]
 async fn main() -> Result<()> {
     store_block_prestate_tracer("http://127.0.0.1:8545", 17190873).await?;
+
+    todo!("also cache to blockhash_opcode_use.json");
     Ok(())
 }

@@ -6,6 +6,9 @@ pub mod constants {
     /// Proofs are for the execution of a single block. Set to 2**15.
     pub const MAX_ACCOUNT_NODES_PER_BLOCK: usize = 32768;
 
+    /// Number of prior blockhashes a block could access via the BLOCKHASH opcode.
+    pub const MAX_BLOCKHASH_READS_PER_BLOCK: usize = 256;
+
     /// Maximum number of bytes permitted for an RLP encoded trie node. Set to 2**15.
     pub const MAX_BYTES_PER_NODE: usize = 32768;
 

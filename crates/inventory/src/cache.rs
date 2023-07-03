@@ -19,7 +19,7 @@ use crate::{
         debug_trace_block_prestate, eth_get_proof, get_block_by_number, AccountProofResponse,
         BlockPrestateInnerTx, BlockPrestateResponse, BlockResponse,
     },
-    transferrable::{CompactBlockStateProof, TransferrableError},
+    transferrable::{RequiredBlockState, TransferrableError},
     types::{BlockHashAccesses, BlockProofs, BlockStateAccesses},
     utils::{compress, hex_decode, UtilsError},
 };
@@ -205,10 +205,15 @@ pub fn compress_proofs(target_block: u64) -> Result<(), CacheError> {
 pub fn create_transferrable_proof(target_block: u64) -> Result<(), CacheError> {
     let proofs = get_proofs_from_cache(target_block)?;
     let contracts = get_contracts_from_cache(target_block)?;
+    let blockhashes = get_blockhashes_from_cache(target_block)?;
 
     let names = CacheFileNames::new(target_block);
 
-    let transferrable = CompactBlockStateProof::create(proofs, contracts.into_values().collect())?;
+    let transferrable = RequiredBlockState::create(
+        proofs,
+        contracts.into_values().collect(),
+        blockhashes.into_iter().collect(),
+    )?;
     let bytes = transferrable.to_ssz_snappy_bytes()?;
     let mut file = File::create(names.prior_block_transferrable_state_proofs())?;
     file.write_all(&bytes)?;
@@ -225,10 +230,10 @@ pub fn get_proofs_from_cache(block: u64) -> Result<BlockProofs, CacheError> {
 }
 
 /// Retrieves the transferrable (ssz+snappy) proofs for a single block from cache.
-pub fn get_transferrable_proofs_from_cache(block: u64) -> Result<CompactBlockStateProof, CacheError> {
+pub fn get_transferrable_proofs_from_cache(block: u64) -> Result<RequiredBlockState, CacheError> {
     let proof_cache_path = CacheFileNames::new(block).prior_block_transferrable_state_proofs();
     let data = fs::read(proof_cache_path)?;
-    let block_proofs = CompactBlockStateProof::from_ssz_snappy_bytes(data)?;
+    let block_proofs = RequiredBlockState::from_ssz_snappy_bytes(data)?;
     Ok(block_proofs)
 }
 

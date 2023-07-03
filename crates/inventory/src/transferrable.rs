@@ -16,7 +16,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use ethers::types::{EIP1186ProofResponse, H160};
+use ethers::types::{EIP1186ProofResponse, H160, H256, U64};
 use ssz_rs::prelude::*;
 use ssz_rs_derive::SimpleSerialize;
 use thiserror::Error;
@@ -67,17 +67,18 @@ pub enum TransferrableError {
 /// - account trie node.
 /// - storage trie node.
 #[derive(PartialEq, Eq, Debug, Default, SimpleSerialize)]
-pub struct CompactBlockStateProof {
+pub struct RequiredBlockState {
     pub compact_eip1186_proofs: CompactEip1186Proofs,
     pub contracts: Contracts,
     pub account_nodes: AccountNodes,
     pub storage_nodes: StorageNodes,
-    // TODO: Add blockhashes: List<RecentBlockHash, 256>
+    pub blockhashes: BlockHashes,
 }
 
 pub type CompactEip1186Proofs = List<CompactEip1186Proof, MAX_ACCOUNT_PROOFS_PER_BLOCK>;
 pub type StorageNodes = List<TrieNode, MAX_STORAGE_NODES_PER_BLOCK>;
 pub type AccountNodes = List<TrieNode, MAX_ACCOUNT_NODES_PER_BLOCK>;
+pub type BlockHashes = List<RecentBlockHash, 256>;
 
 /// RLP-encoded Merkle PATRICIA Trie node.
 pub type TrieNode = List<u8, MAX_BYTES_PER_NODE>;
@@ -87,6 +88,13 @@ pub type Contracts = List<Contract, MAX_CONTRACTS_PER_BLOCK>;
 
 /// Contract bytecode.
 pub type Contract = List<u8, MAX_BYTES_PER_CONTRACT>;
+
+/// A block hash for a recent block, for use by the BLOCKHASH opcode.
+#[derive(PartialEq, Eq, Debug, Default, SimpleSerialize)]
+pub struct RecentBlockHash {
+    pub block_number: SszU64,
+    pub block_hash: SszH256,
+}
 
 /// An EIP-1186 style proof with the trie nodes replaced by their keccak hashes.
 #[derive(PartialEq, Eq, Debug, Default, SimpleSerialize)]
@@ -117,21 +125,23 @@ pub struct CompactStorageProof {
 /// the same block.
 pub type NodeIndices = List<u16, MAX_NODES_PER_PROOF>;
 
-impl CompactBlockStateProof {
+impl RequiredBlockState {
     /// Creates a compact proof by separating trie nodes and contract code from the proof data.
     pub fn create(
         block_proofs: BlockProofs,
         accessed_contracts: Vec<ContractBytes>,
+        accessed_blockhashes: Vec<(U64, H256)>,
     ) -> Result<Self, TransferrableError> {
         let node_set = get_trie_node_set(&block_proofs.proofs);
         // TODO Remove this clone.
         let node_map = get_node_map(node_set.clone());
 
-        let proof = CompactBlockStateProof {
+        let proof = RequiredBlockState {
             compact_eip1186_proofs: get_compact_eip1186_proofs(&node_map, block_proofs)?,
             contracts: contracts_to_ssz(accessed_contracts),
             account_nodes: bytes_collection_to_ssz(node_set.account),
             storage_nodes: bytes_collection_to_ssz(node_set.storage),
+            blockhashes: blockhashes_to_ssz(accessed_blockhashes),
         };
         Ok(proof)
     }
@@ -278,6 +288,11 @@ fn contracts_to_ssz(input: Vec<ContractBytes>) -> Contracts {
         })
         .for_each(|contract| contracts.push(contract));
     contracts
+}
+
+/// Turns a collection of accessed blockhashes into an SSZ format.
+fn blockhashes_to_ssz(accessed_blockhashes: Vec<(U64, H256)>) -> List<RecentBlockHash, 256> {
+    todo!()
 }
 
 /// Turns a collection of bytes into an SSZ format.
