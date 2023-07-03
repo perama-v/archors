@@ -67,14 +67,15 @@ pub enum TransferrableError {
 /// - account trie node.
 /// - storage trie node.
 #[derive(PartialEq, Eq, Debug, Default, SimpleSerialize)]
-pub struct SlimBlockStateProof {
-    pub slim_eip1186_proofs: SlimEip1186Proofs,
+pub struct CompactBlockStateProof {
+    pub compact_eip1186_proofs: CompactEip1186Proofs,
     pub contracts: Contracts,
     pub account_nodes: AccountNodes,
     pub storage_nodes: StorageNodes,
+    // TODO: Add blockhashes.
 }
 
-pub type SlimEip1186Proofs = List<SlimEip1186Proof, MAX_ACCOUNT_PROOFS_PER_BLOCK>;
+pub type CompactEip1186Proofs = List<CompactEip1186Proof, MAX_ACCOUNT_PROOFS_PER_BLOCK>;
 pub type StorageNodes = List<TrieNode, MAX_STORAGE_NODES_PER_BLOCK>;
 pub type AccountNodes = List<TrieNode, MAX_ACCOUNT_NODES_PER_BLOCK>;
 
@@ -89,21 +90,21 @@ pub type Contract = List<u8, MAX_BYTES_PER_CONTRACT>;
 
 /// An EIP-1186 style proof with the trie nodes replaced by their keccak hashes.
 #[derive(PartialEq, Eq, Debug, Default, SimpleSerialize)]
-pub struct SlimEip1186Proof {
+pub struct CompactEip1186Proof {
     pub address: SszH160,
     pub balance: SszU256,
     pub code_hash: SszH256,
     pub nonce: SszU64,
     pub storage_hash: SszH256,
     pub account_proof: NodeIndices,
-    pub storage_proofs: SlimStorageProofs,
+    pub storage_proofs: CompactStorageProofs,
 }
 
-pub type SlimStorageProofs = List<SlimStorageProof, MAX_STORAGE_PROOFS_PER_ACCOUNT>;
+pub type CompactStorageProofs = List<CompactStorageProof, MAX_STORAGE_PROOFS_PER_ACCOUNT>;
 
 /// An EIP-1186 style proof with the trie nodes replaced by their keccak hashes.
 #[derive(PartialEq, Eq, Debug, Default, SimpleSerialize)]
-pub struct SlimStorageProof {
+pub struct CompactStorageProof {
     pub key: SszH256,
     pub value: SszU256,
     pub proof: NodeIndices,
@@ -116,8 +117,8 @@ pub struct SlimStorageProof {
 /// the same block.
 pub type NodeIndices = List<u16, MAX_NODES_PER_PROOF>;
 
-impl SlimBlockStateProof {
-    /// Creates a slim proof by separating trie nodes and contract code from the proof data.
+impl CompactBlockStateProof {
+    /// Creates a compact proof by separating trie nodes and contract code from the proof data.
     pub fn create(
         block_proofs: BlockProofs,
         accessed_contracts: Vec<ContractBytes>,
@@ -126,8 +127,8 @@ impl SlimBlockStateProof {
         // TODO Remove this clone.
         let node_map = get_node_map(node_set.clone());
 
-        let proof = SlimBlockStateProof {
-            slim_eip1186_proofs: get_slim_eip1186_proofs(&node_map, block_proofs)?,
+        let proof = CompactBlockStateProof {
+            compact_eip1186_proofs: get_compact_eip1186_proofs(&node_map, block_proofs)?,
             contracts: contracts_to_ssz(accessed_contracts),
             account_nodes: bytes_collection_to_ssz(node_set.account),
             storage_nodes: bytes_collection_to_ssz(node_set.storage),
@@ -174,35 +175,35 @@ fn get_node_map(node_set: TrieNodesSet) -> TrieNodesIndices {
 }
 
 /// Replace every node with a reference to the index in a list.
-fn get_slim_eip1186_proofs(
+fn get_compact_eip1186_proofs(
     node_set: &TrieNodesIndices,
     block_proofs: BlockProofs,
-) -> Result<SlimEip1186Proofs, TransferrableError> {
-    let mut ssz_eip1186_proofs = SlimEip1186Proofs::default();
+) -> Result<CompactEip1186Proofs, TransferrableError> {
+    let mut ssz_eip1186_proofs = CompactEip1186Proofs::default();
     for proof in block_proofs.proofs {
         // Account
         let account_indices = nodes_to_node_indices(proof.1.account_proof, &node_set.account)?;
         // Storage
-        let mut slim_storage_proofs = SlimStorageProofs::default();
+        let mut compact_storage_proofs = CompactStorageProofs::default();
         for storage_proof in proof.1.storage_proof {
             let storage_indices = nodes_to_node_indices(storage_proof.proof, &node_set.storage)?;
             // key, value
-            let slim_storage_proof = SlimStorageProof {
+            let compact_storage_proof = CompactStorageProof {
                 key: h256_to_ssz_h256(storage_proof.key)?,
                 value: u256_to_ssz_u256(storage_proof.value),
                 proof: storage_indices,
             };
-            slim_storage_proofs.push(slim_storage_proof);
+            compact_storage_proofs.push(compact_storage_proof);
         }
 
-        let ssz_eip1186_proof = SlimEip1186Proof {
+        let ssz_eip1186_proof = CompactEip1186Proof {
             address: h160_to_ssz_h160(proof.1.address)?,
             balance: u256_to_ssz_u256(proof.1.balance),
             code_hash: h256_to_ssz_h256(proof.1.code_hash)?,
             nonce: u64_to_ssz_u64(proof.1.nonce),
             storage_hash: h256_to_ssz_h256(proof.1.storage_hash)?,
             account_proof: account_indices,
-            storage_proofs: slim_storage_proofs,
+            storage_proofs: compact_storage_proofs,
         };
         ssz_eip1186_proofs.push(ssz_eip1186_proof);
     }
@@ -229,7 +230,7 @@ fn nodes_to_node_indices(
 }
 
 /// Holds all node set present in a block state proof. Used to construct
-/// deduplicated slim proof.
+/// deduplicated compact proof.
 #[derive(Clone)]
 struct TrieNodesSet {
     account: Vec<NodeBytes>,
@@ -237,7 +238,7 @@ struct TrieNodesSet {
 }
 
 /// /// Maps node -> index for all nodes present in a block state proof. Used to construct
-/// deduplicated slim proof.
+/// deduplicated compact proof.
 struct TrieNodesIndices {
     account: HashMap<NodeBytes, usize>,
     storage: HashMap<NodeBytes, usize>,
