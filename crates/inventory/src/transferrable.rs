@@ -72,7 +72,7 @@ pub struct CompactBlockStateProof {
     pub contracts: Contracts,
     pub account_nodes: AccountNodes,
     pub storage_nodes: StorageNodes,
-    // TODO: Add blockhashes.
+    // TODO: Add blockhashes: List<RecentBlockHash, 256>
 }
 
 pub type CompactEip1186Proofs = List<CompactEip1186Proof, MAX_ACCOUNT_PROOFS_PER_BLOCK>;
