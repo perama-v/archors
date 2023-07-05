@@ -46,12 +46,23 @@ pub(crate) struct BlockPrestateInnerTx {
 }
 
 /// Generates a JSON-RPC request for debug_traceBlockByNumber for
-/// the given block.
+/// the given block with the prestateTracer.
 pub(crate) fn debug_trace_block_prestate(block: &str) -> JsonRpcRequest {
     JsonRpcRequest {
         jsonrpc: "2.0".to_owned(),
         method: "debug_traceBlockByNumber".to_owned(),
         params: vec![json!(block), json!({"tracer": "prestateTracer"})],
+        id: 1,
+    }
+}
+
+/// Generates a JSON-RPC request for debug_traceBlockByNumber for
+/// the given block with the default tracer.
+pub(crate) fn debug_trace_block_default(block: &str) -> JsonRpcRequest {
+    JsonRpcRequest {
+        jsonrpc: "2.0".to_owned(),
+        method: "debug_traceBlockByNumber".to_owned(),
+        params: vec![json!(block)],
         id: 1,
     }
 }
@@ -80,4 +91,34 @@ pub(crate) fn eth_get_proof(account: &AccountToProve, block_number: &str) -> Jso
         ],
         id: 1,
     }
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub(crate) struct BlockDefaultTraceResponse {
+    id: u32,
+    jsonrpc: String,
+    pub(crate) result: Vec<TxDefaultTraceResult>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub(crate) struct TxDefaultTraceResult {
+    pub(crate) result: DefaultTxTrace,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DefaultTxTrace {
+    pub(crate) struct_logs: Vec<EvmStep>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct EvmStep {
+    pub(crate) pc: u64,
+    pub(crate) op: String,
+    pub(crate) gas: u64,
+    pub(crate) gas_cost: u64,
+    pub(crate) depth: u64,
+    pub(crate) stack: Vec<String>,
+    pub(crate) memory: Vec<String>,
 }

@@ -4,6 +4,7 @@ use std::{
     fs::{self, File},
     io::{self, BufReader, Write},
     path::PathBuf,
+    str::FromStr,
 };
 
 use ethers::{
@@ -17,10 +18,10 @@ use url::{ParseError, Url};
 use crate::{
     rpc::{
         debug_trace_block_prestate, eth_get_proof, get_block_by_number, AccountProofResponse,
-        BlockPrestateInnerTx, BlockPrestateResponse, BlockResponse,
+        BlockDefaultTraceResponse, BlockPrestateInnerTx, BlockPrestateResponse, BlockResponse,
     },
     transferrable::{RequiredBlockState, TransferrableError},
-    types::{BlockHashAccesses, BlockProofs, BlockStateAccesses},
+    types::{BlockHashAccess, BlockHashAccesses, BlockProofs, BlockStateAccesses},
     utils::{compress, hex_decode, UtilsError},
 };
 
@@ -96,6 +97,66 @@ pub async fn store_block_prestate_tracer(url: &str, target_block: u64) -> Result
     fs::create_dir_all(names.dirname())?;
     let mut block_file = File::create(names.block_prestate_trace())?;
     block_file.write_all(serde_json::to_string_pretty(&response.result)?.as_bytes())?;
+    Ok(())
+}
+
+/// Calls debug_traceBlock with the default tracer and filters the result
+/// for BLOCKHASH opcode use.
+///
+/// The results (up to 256 pairs of block number / blockhash pairs) are stored.
+pub async fn store_blockhash_opcode_reads(url: &str, target_block: u64) -> Result<(), CacheError> {
+    let client = Client::new();
+    let block_number_hex = format!("0x{:x}", target_block);
+    /*
+    let response: BlockDefaultTraceResponse = client
+        .post(Url::parse(url)?)
+        .json(&debug_trace_block_default(&block_number_hex))
+        .send()
+        .await?
+        .json()
+        .await?;
+    */
+
+    let names = CacheFileNames::new(target_block);
+    let dir = names.dirname();
+    fs::create_dir_all(dir)?;
+
+
+    let mut filename = names.dirname();
+    filename.push("trace_for_blockhash_opcode.txt");
+    let file = File::open(filename)?;
+    let mut reader = BufReader::new(file);
+    let stream =
+        serde_json::Deserializer::from_reader(&mut reader).into_iter::<BlockDefaultTraceResponse>();
+
+    let mut blockhash_reads: HashMap<U64, H256> = HashMap::new();
+    for response in stream {
+        for tx in response?.result {
+            let mut steps = tx.result.struct_logs.iter().peekable();
+            while let Some(&ref step) = steps.next() {
+                if step.op == "BLOCKHASH" {
+                    println!("{:?}", step);
+                    let block_number = U64::from_str(&step.stack.last().unwrap()).unwrap();
+                    let hash =
+                        H256::from_str(&steps.peek().unwrap().stack.last().unwrap()).unwrap();
+                    blockhash_reads.insert(block_number, hash);
+                }
+            }
+        }
+    }
+    println!("{:?}", blockhash_reads);
+
+    let hashes = BlockHashAccesses {
+        blockhash_accesses: blockhash_reads
+            .into_iter()
+            .map(|(block_number, block_hash)| BlockHashAccess {
+                block_number,
+                block_hash,
+            })
+            .collect::<Vec<BlockHashAccess>>(),
+    };
+    let mut blockhash_file = File::create(names.blockhashes())?;
+    blockhash_file.write_all(serde_json::to_string_pretty(&hashes)?.as_bytes())?;
     Ok(())
 }
 
