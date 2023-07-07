@@ -4,24 +4,28 @@ use std::{
     fs::{self, File},
     io::{self, BufReader, Write},
     path::PathBuf,
-    str::FromStr,
 };
 
 use ethers::{
     types::{Block, Transaction, H160, H256, U64},
     utils::keccak256,
 };
+
+use futures::stream::StreamExt;
 use reqwest::Client;
 use thiserror::Error;
 use url::{ParseError, Url};
 
 use crate::{
     rpc::{
-        debug_trace_block_prestate, eth_get_proof, get_block_by_number, AccountProofResponse,
-        BlockDefaultTraceResponse, BlockPrestateInnerTx, BlockPrestateResponse, BlockResponse,
+        debug_trace_block_default, debug_trace_block_prestate, eth_get_proof, get_block_by_number,
+        AccountProofResponse, BlockDefaultTraceResponse, BlockPrestateInnerTx,
+        BlockPrestateResponse, BlockResponse,
     },
     transferrable::{RequiredBlockState, TransferrableError},
-    types::{BlockHashAccess, BlockHashAccesses, BlockProofs, BlockStateAccesses},
+    types::{
+        BlockHashAccesses, BlockHashString, BlockHashStrings, BlockProofs, BlockStateAccesses,
+    },
     utils::{compress, hex_decode, UtilsError},
 };
 
@@ -35,14 +39,23 @@ pub enum CacheError {
     ReqwestError(#[from] reqwest::Error),
     #[error("IO error {0}")]
     IoError(#[from] io::Error),
+    #[error("Unable to peek next EVM step")]
+    EvmPeekAbsent,
     #[error("serde_json error {0}")]
     SerdeJsonError(#[from] serde_json::Error),
+    #[error("EVM stack empty, expected item")]
+    StackEmpty,
     #[error("Transferrable error {0}")]
     TransferrableError(#[from] TransferrableError),
     #[error("Url error {0}")]
     UrlError(#[from] ParseError),
     #[error("Utils error {0}")]
     UtilsError(#[from] UtilsError),
+    #[error("File {filename} could not be opened {source}")]
+    FileOpener {
+        source: io::Error,
+        filename: PathBuf,
+    },
 }
 
 pub async fn store_block_with_transactions(url: &str, target_block: u64) -> Result<(), CacheError> {
@@ -104,59 +117,76 @@ pub async fn store_block_prestate_tracer(url: &str, target_block: u64) -> Result
 /// for BLOCKHASH opcode use.
 ///
 /// The results (up to 256 pairs of block number / blockhash pairs) are stored.
+///
+/// Uses a temp file to store the trace instead of holding in memory.
+///
+/// Alternative, use terminal and use grep/jq to avoid disk write.
 pub async fn store_blockhash_opcode_reads(url: &str, target_block: u64) -> Result<(), CacheError> {
-    let client = Client::new();
-    let block_number_hex = format!("0x{:x}", target_block);
-    /*
-    let response: BlockDefaultTraceResponse = client
-        .post(Url::parse(url)?)
-        .json(&debug_trace_block_default(&block_number_hex))
-        .send()
-        .await?
-        .json()
-        .await?;
-    */
-
     let names = CacheFileNames::new(target_block);
     let dir = names.dirname();
     fs::create_dir_all(dir)?;
 
+    let mut trace_filename = names.dirname();
+    trace_filename.push("temp_trace_for_blockhash_opcode.txt");
+    let mut trace_file = File::create(&trace_filename)?;
+    // Get the trace from the node and store temporarily.
+    let client = Client::new();
+    let block_number_hex = format!("0x{:x}", target_block);
 
-    let mut filename = names.dirname();
-    filename.push("trace_for_blockhash_opcode.txt");
-    let file = File::open(filename)?;
+    let response = client
+        .post(Url::parse(url)?)
+        .json(&debug_trace_block_default(&block_number_hex))
+        .send()
+        .await?;
+
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        trace_file.write_all(&chunk?)?;
+    }
+    drop(trace_file);
+
+    // Read the trace from file and filter for blockhash opcode.
+    let file = File::open(&trace_filename)?;
     let mut reader = BufReader::new(file);
     let stream =
         serde_json::Deserializer::from_reader(&mut reader).into_iter::<BlockDefaultTraceResponse>();
 
-    let mut blockhash_reads: HashMap<U64, H256> = HashMap::new();
+    let mut blockhash_reads: HashMap<String, String> = HashMap::new();
     for response in stream {
         for tx in response?.result {
             let mut steps = tx.result.struct_logs.iter().peekable();
-            while let Some(&ref step) = steps.next() {
+            while let Some(step) = steps.next() {
                 if step.op == "BLOCKHASH" {
-                    println!("{:?}", step);
-                    let block_number = U64::from_str(&step.stack.last().unwrap()).unwrap();
-                    let hash =
-                        H256::from_str(&steps.peek().unwrap().stack.last().unwrap()).unwrap();
-                    blockhash_reads.insert(block_number, hash);
+                    let block_number = step.stack.last().ok_or(CacheError::StackEmpty)?;
+                    let block_hash = steps
+                        .peek()
+                        .ok_or(CacheError::EvmPeekAbsent)?
+                        .stack
+                        .last()
+                        .ok_or(CacheError::StackEmpty)?;
+                    blockhash_reads.insert(block_number.to_owned(), block_hash.to_owned());
                 }
             }
         }
     }
-    println!("{:?}", blockhash_reads);
-
-    let hashes = BlockHashAccesses {
+    let hashes = BlockHashStrings {
         blockhash_accesses: blockhash_reads
             .into_iter()
-            .map(|(block_number, block_hash)| BlockHashAccess {
+            .map(|(block_number, block_hash)| BlockHashString {
                 block_number,
                 block_hash,
             })
-            .collect::<Vec<BlockHashAccess>>(),
+            .collect::<Vec<BlockHashString>>(),
     };
+
+    let names = CacheFileNames::new(target_block);
+    let dir = names.dirname();
+    fs::create_dir_all(dir)?;
     let mut blockhash_file = File::create(names.blockhashes())?;
     blockhash_file.write_all(serde_json::to_string_pretty(&hashes)?.as_bytes())?;
+
+    // Remove the temp trace file
+    fs::remove_file(trace_filename)?;
     Ok(())
 }
 
@@ -167,7 +197,11 @@ pub async fn store_blockhash_opcode_reads(url: &str, target_block: u64) -> Resul
 /// represent duplication that can be resolved with compression.
 pub fn store_deduplicated_state(target_block: u64) -> Result<(), CacheError> {
     let names = CacheFileNames::new(target_block);
-    let data = fs::read_to_string(names.block_prestate_trace())?;
+    let filename = names.block_prestate_trace();
+    let data = fs::read_to_string(&filename).map_err(|e| CacheError::FileOpener {
+        source: e,
+        filename,
+    })?;
     let block: Vec<BlockPrestateInnerTx> = serde_json::from_str(&data)?;
 
     let mut state_accesses = BlockStateAccesses::new();
@@ -191,7 +225,11 @@ pub fn store_deduplicated_state(target_block: u64) -> Result<(), CacheError> {
 pub async fn store_state_proofs(url: &str, target_block: u64) -> Result<(), CacheError> {
     let client = Client::new();
     let names = CacheFileNames::new(target_block);
-    let data = fs::read_to_string(names.block_accessed_state_deduplicated())?;
+    let filename = names.block_accessed_state_deduplicated();
+    let data = fs::read_to_string(&filename).map_err(|e| CacheError::FileOpener {
+        source: e,
+        filename,
+    })?;
     let state_accesses: BlockStateAccesses = serde_json::from_str(&data)?;
     let accounts_to_prove = state_accesses.get_all_accounts_to_prove();
 
@@ -224,7 +262,11 @@ pub async fn store_state_proofs(url: &str, target_block: u64) -> Result<(), Cach
 /// at different addresses.
 pub fn compress_deduplicated_state(target_block: u64) -> Result<(), CacheError> {
     let names = CacheFileNames::new(target_block);
-    let data = fs::read(names.block_accessed_state_deduplicated())?;
+    let filename = names.block_accessed_state_deduplicated();
+    let data = fs::read(&filename).map_err(|e| CacheError::FileOpener {
+        source: e,
+        filename,
+    })?;
     let compressed = compress(data)?;
     let mut file = File::create(names.block_accessed_state_deduplicated_compressed())?;
     file.write_all(&compressed)?;
@@ -254,7 +296,10 @@ pub fn compress_deduplicated_state(target_block: u64) -> Result<(), CacheError> 
 pub fn compress_proofs(target_block: u64) -> Result<(), CacheError> {
     let names = CacheFileNames::new(target_block);
     let block_file = names.prior_block_state_proofs();
-    let data = fs::read(block_file)?;
+    let data = fs::read(&block_file).map_err(|e| CacheError::FileOpener {
+        source: e,
+        filename: block_file,
+    })?;
     let compressed = compress(data)?;
     let mut file = File::create(names.prior_block_state_proofs_compressed())?;
     file.write_all(&compressed)?;
@@ -293,7 +338,10 @@ pub fn get_proofs_from_cache(block: u64) -> Result<BlockProofs, CacheError> {
 /// Retrieves the transferrable (ssz+snappy) proofs for a single block from cache.
 pub fn get_transferrable_proofs_from_cache(block: u64) -> Result<RequiredBlockState, CacheError> {
     let proof_cache_path = CacheFileNames::new(block).prior_block_transferrable_state_proofs();
-    let data = fs::read(proof_cache_path)?;
+    let data = fs::read(&proof_cache_path).map_err(|e| CacheError::FileOpener {
+        source: e,
+        filename: proof_cache_path,
+    })?;
     let block_proofs = RequiredBlockState::from_ssz_snappy_bytes(data)?;
     Ok(block_proofs)
 }
