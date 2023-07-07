@@ -141,7 +141,7 @@ impl RequiredBlockState {
             contracts: contracts_to_ssz(accessed_contracts),
             account_nodes: bytes_collection_to_ssz(node_set.account),
             storage_nodes: bytes_collection_to_ssz(node_set.storage),
-            blockhashes: blockhashes_to_ssz(accessed_blockhashes),
+            blockhashes: blockhashes_to_ssz(accessed_blockhashes)?,
         };
         Ok(proof)
     }
@@ -291,8 +291,19 @@ fn contracts_to_ssz(input: Vec<ContractBytes>) -> Contracts {
 }
 
 /// Turns a collection of accessed blockhashes into an SSZ format.
-fn blockhashes_to_ssz(accessed_blockhashes: Vec<(U64, H256)>) -> List<RecentBlockHash, 256> {
-    todo!()
+fn blockhashes_to_ssz(
+    accessed_blockhashes: Vec<(U64, H256)>,
+) -> Result<BlockHashes, TransferrableError> {
+    let mut blockhashes = BlockHashes::default();
+    for (num, hash) in accessed_blockhashes {
+        let block_hash = h256_to_ssz_h256(hash).map_err(TransferrableError::UtilsError)?;
+        let pair = RecentBlockHash {
+            block_number: u64_to_ssz_u64(num),
+            block_hash,
+        };
+        blockhashes.push(pair);
+    }
+    Ok(blockhashes)
 }
 
 /// Turns a collection of bytes into an SSZ format.

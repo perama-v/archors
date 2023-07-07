@@ -31,6 +31,20 @@ pub struct BlockHashAccess {
     pub block_hash: H256,
 }
 
+/// BLOCKASH opcode use for a whole block, obtained by tracing a node and filtering
+/// for the the opcode.
+#[derive(Deserialize, Serialize)]
+pub struct BlockHashStrings {
+    pub blockhash_accesses: Vec<BlockHashString>,
+}
+
+/// Single BLOCKASH opcode use.
+#[derive(Deserialize, Serialize)]
+pub struct BlockHashString {
+    pub block_number: String,
+    pub block_hash: String,
+}
+
 /// Prestate tracer for all transactions in a block, as returned by
 /// a node.
 #[derive(Deserialize, Serialize)]
