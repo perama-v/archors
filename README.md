@@ -582,12 +582,38 @@ See that the EVM now has the correct hash `0x5734...7939` at the top of the stac
 }
 ```
 
+### Data expansion
 
-### Future considerations
+Local tracing has better trust assumptions, but is also more efficient compared to receiving a trace from a third-party.
+
+Traces are detailed expansions of the EVM, and are more suited to perform locally rather than
+request.
+
+For example, block `17640079` trace can be generated from the following ~3MB data:
+- 277KB Block with transactions (`block_with_transactions.json`)
+- 1.9MB State with proofs (`prior_block_transferrable_state_proofs.ssz_snappy`)
+
+The trace generated is:
+- Memory disabled: 270MB (100x bandwidth vs local)
+- Memory enabled: 35GB (10_000x bandwidth vs local)
+
+### Future considerations - Beacon root
 
 Like BLOCKHASH, `EIP-4788: Beacon block root in the EVM` is an opcode that allows
-the EVM to read state that is presumed available to the executor.
+the EVM to read state that is presumed available to the executor. The opcode will
+allow the EVM to access up to 8192 of the prior beacon block state roots.
 
 If this EIP is included, this data should be included alongside BLOCKHASH data. That is,
 trace the block, search for the opcode and add beacon roots to the bundle that is passed
 to a peer. They can verify the canonicality of those roots prior to EVM execution.
+
+### Future considerations - BLOBHASH
+
+The BLOBHASH opcode is introduced by `EIP-4844: Shard blob transactions` and allows
+the EVM to read state that is already present within the block body. Each block may contain
+some number of blob-type transactions (max ~6).
+
+Each blob transaction may contain multiple blob hashes (limited by max for block). The EVM may access those hashes by using the index of the blob within that transaction. Blobs from other transactions are not accessible by the EVM.
+
+No blob hashes from prior blocks are accessible by the EVM.
+Hence, the state required to trace the block does not change.
