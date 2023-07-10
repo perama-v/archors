@@ -62,7 +62,7 @@ pub(crate) fn debug_trace_block_default(block: &str) -> JsonRpcRequest {
     JsonRpcRequest {
         jsonrpc: "2.0".to_owned(),
         method: "debug_traceBlockByNumber".to_owned(),
-        params: vec![json!(block)],
+        params: vec![json!(block), json!({"disableMemory": true})],
         id: 1,
     }
 }
@@ -120,5 +120,5 @@ pub(crate) struct EvmStep {
     pub(crate) gas_cost: u64,
     pub(crate) depth: u64,
     pub(crate) stack: Vec<String>,
-    pub(crate) memory: Vec<String>,
+    pub(crate) memory: Option<Vec<String>>,
 }
