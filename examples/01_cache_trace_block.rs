@@ -9,9 +9,10 @@ use archors_inventory::cache::{store_block_prestate_tracer, store_blockhash_opco
 #[tokio::main]
 async fn main() -> Result<()> {
     const NODE: &str = "http://127.0.0.1:8545";
-    const BLOCK_NUMBER: u64 = 17637768;
 
-    // store_block_prestate_tracer(NODE, BLOCK_NUMBER).await?;
+    const BLOCK_NUMBER: u64 = 17170873;
+
+    store_block_prestate_tracer(NODE, BLOCK_NUMBER).await?;
     store_blockhash_opcode_reads(NODE, BLOCK_NUMBER).await?;
 
     Ok(())
