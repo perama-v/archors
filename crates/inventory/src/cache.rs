@@ -6,11 +6,11 @@ use std::{
     path::PathBuf,
 };
 
+use archors_types::state::{RequiredBlockState, StateError};
 use ethers::{
     types::{Block, Transaction, H160, H256, U64},
     utils::keccak256,
 };
-
 use futures::stream::StreamExt;
 use reqwest::Client;
 use thiserror::Error;
@@ -22,11 +22,11 @@ use crate::{
         AccountProofResponse, BlockDefaultTraceResponse, BlockPrestateInnerTx,
         BlockPrestateResponse, BlockResponse,
     },
-    transferrable::{RequiredBlockState, TransferrableError},
+    transferrable::{state_from_parts, TransferrableError},
     types::{
         BlockHashAccesses, BlockHashString, BlockHashStrings, BlockProofs, BlockStateAccesses,
     },
-    utils::{compress, hex_decode, UtilsError},
+    utils::{compress, decompress, hex_decode, UtilsError},
 };
 
 static CACHE_DIR: &str = "data/blocks";
@@ -45,6 +45,8 @@ pub enum CacheError {
     SerdeJsonError(#[from] serde_json::Error),
     #[error("EVM stack empty, expected item")]
     StackEmpty,
+    #[error("State type error {0}")]
+    StateError(#[from] StateError),
     #[error("Transferrable error {0}")]
     TransferrableError(#[from] TransferrableError),
     #[error("Url error {0}")]
@@ -315,12 +317,13 @@ pub fn create_transferrable_proof(target_block: u64) -> Result<(), CacheError> {
 
     let names = CacheFileNames::new(target_block);
 
-    let transferrable = RequiredBlockState::create(
+    let transferrable = state_from_parts(
         proofs,
         contracts.into_values().collect(),
         blockhashes.into_iter().collect(),
     )?;
-    let bytes = transferrable.to_ssz_snappy_bytes()?;
+    let ssz = transferrable.to_ssz_bytes()?;
+    let bytes = compress(ssz)?;
     let mut file = File::create(names.prior_block_transferrable_state_proofs())?;
     file.write_all(&bytes)?;
     Ok(())
@@ -336,13 +339,14 @@ pub fn get_proofs_from_cache(block: u64) -> Result<BlockProofs, CacheError> {
 }
 
 /// Retrieves the transferrable (ssz+snappy) proofs for a single block from cache.
-pub fn get_transferrable_proofs_from_cache(block: u64) -> Result<RequiredBlockState, CacheError> {
+pub fn get_required_state_from_cache(block: u64) -> Result<RequiredBlockState, CacheError> {
     let proof_cache_path = CacheFileNames::new(block).prior_block_transferrable_state_proofs();
     let data = fs::read(&proof_cache_path).map_err(|e| CacheError::FileOpener {
         source: e,
         filename: proof_cache_path,
     })?;
-    let block_proofs = RequiredBlockState::from_ssz_snappy_bytes(data)?;
+    let ssz = decompress(data)?;
+    let block_proofs = RequiredBlockState::from_ssz_bytes(ssz)?;
     Ok(block_proofs)
 }
 

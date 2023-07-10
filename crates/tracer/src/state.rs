@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 
+use archors_types::state::RequiredBlockState;
 use ethers::types::{EIP1186ProofResponse, H160, H256, U64};
 use revm::{
     db::{CacheDB, EmptyDB},
@@ -147,6 +148,26 @@ where
             })?;
     }
     Ok(db)
+}
+
+impl CompleteAccounts for RequiredBlockState {
+    fn get_account_info(&self, address: &B160) -> Result<AccountInfo, StateError> {
+        todo!()
+    }
+
+    fn addresses(&self) -> Vec<B160> {
+        todo!()
+    }
+
+    fn get_account_storage(&self, address: &B160) -> Result<rHashMap<U256, U256>, StateError> {
+        todo!()
+    }
+}
+
+impl BlockHashes for RequiredBlockState {
+    fn get_blockhash_accesses(&self) -> Result<rHashMap<U256, B256>, StateError> {
+        todo!()
+    }
 }
 
 #[cfg(test)]

@@ -2,7 +2,7 @@ use std::env;
 
 use anyhow::Result;
 use archors_inventory::{
-    cache::{get_block_from_cache, get_transferrable_proofs_from_cache},
+    cache::{get_block_from_cache, get_required_state_from_cache},
     overlap::measure_proof_overlap,
     utils::compress,
 };
@@ -29,7 +29,7 @@ async fn main() -> Result<()> {
         let kgas = (block.gas_used / 1000).as_usize();
         total_kgas += kgas;
 
-        let proof = get_transferrable_proofs_from_cache(block_num)?;
+        let proof = get_required_state_from_cache(block_num)?;
 
         // Get disk size ssz
         let ssz_bytes = proof.to_ssz_bytes()?;

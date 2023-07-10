@@ -5,6 +5,7 @@ edition = "2021"
 description = "Tool for tracing an Ethereum block using state from EIP-1186 proofs"
 
 [dependencies]
+archors_types = {path = "../types"}
 ethers = "2.0.4"
 hex = "0.4.3"
 revm = { git = "https://github.com/bluealloy/revm", features = ["serde"]}

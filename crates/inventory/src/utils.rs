@@ -9,7 +9,7 @@ use hex::FromHexError;
 use ssz_rs::SimpleSerializeError;
 use thiserror::Error;
 
-use crate::ssz::types::{SszH160, SszH256, SszU256, SszU64};
+use archors_types::alias::{SszH160, SszH256, SszU256, SszU64};
 
 #[derive(Debug, Error)]
 pub enum UtilsError {

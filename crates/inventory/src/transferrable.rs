@@ -16,25 +16,20 @@
 
 use std::collections::{HashMap, HashSet};
 
+use archors_types::state::{
+    BlockHashes, CompactEip1186Proof, CompactEip1186Proofs, CompactStorageProof,
+    CompactStorageProofs, Contract, Contracts, NodeIndices, RecentBlockHash, RequiredBlockState,
+};
 use ethers::types::{EIP1186ProofResponse, H160, H256, U64};
 use ssz_rs::prelude::*;
-use ssz_rs_derive::SimpleSerialize;
 use thiserror::Error;
 
 use crate::{
     cache::ContractBytes,
-    ssz::{
-        constants::{
-            MAX_ACCOUNT_NODES_PER_BLOCK, MAX_ACCOUNT_PROOFS_PER_BLOCK, MAX_BYTES_PER_CONTRACT,
-            MAX_BYTES_PER_NODE, MAX_CONTRACTS_PER_BLOCK, MAX_NODES_PER_PROOF,
-            MAX_STORAGE_NODES_PER_BLOCK, MAX_STORAGE_PROOFS_PER_ACCOUNT,
-        },
-        types::{SszH160, SszH256, SszU256, SszU64},
-    },
     types::BlockProofs,
     utils::{
-        compress, decompress, h160_to_ssz_h160, h256_to_ssz_h256, u256_to_ssz_u256, u64_to_ssz_u64,
-        usize_to_u16, UtilsError,
+        h160_to_ssz_h160, h256_to_ssz_h256, u256_to_ssz_u256, u64_to_ssz_u64, usize_to_u16,
+        UtilsError,
     },
 };
 
@@ -52,121 +47,24 @@ pub enum TransferrableError {
     NoIndexForNode,
 }
 
-/// State that has items referred to using indices to deduplicate data.
-///
-/// This store represents the minimum
-/// set of information that a peer should send to enable a block holder (eth_getBlockByNumber)
-/// to trace the block.
-///
-/// Consists of:
-/// - A collection of EIP-1186 style proofs with intermediate nodes referred to in a separate list.
-/// EIP-1186 proofs consist of:
-///     - address, balance, codehash, nonce, storagehash, accountproofnodeindices, storageproofs
-///         - storageproofs: key, value, storageproofnodeindices
-/// - contract code.
-/// - account trie node.
-/// - storage trie node.
-#[derive(PartialEq, Eq, Debug, Default, SimpleSerialize)]
-pub struct RequiredBlockState {
-    pub compact_eip1186_proofs: CompactEip1186Proofs,
-    pub contracts: Contracts,
-    pub account_nodes: AccountNodes,
-    pub storage_nodes: StorageNodes,
-    pub blockhashes: BlockHashes,
-}
+/// Creates a compact proof by separating trie nodes and contract code from the proof data.
+pub fn state_from_parts(
+    block_proofs: BlockProofs,
+    accessed_contracts: Vec<ContractBytes>,
+    accessed_blockhashes: Vec<(U64, H256)>,
+) -> Result<RequiredBlockState, TransferrableError> {
+    let node_set = get_trie_node_set(&block_proofs.proofs);
+    // TODO Remove this clone.
+    let node_map = get_node_map(node_set.clone());
 
-pub type CompactEip1186Proofs = List<CompactEip1186Proof, MAX_ACCOUNT_PROOFS_PER_BLOCK>;
-pub type StorageNodes = List<TrieNode, MAX_STORAGE_NODES_PER_BLOCK>;
-pub type AccountNodes = List<TrieNode, MAX_ACCOUNT_NODES_PER_BLOCK>;
-pub type BlockHashes = List<RecentBlockHash, 256>;
-
-/// RLP-encoded Merkle PATRICIA Trie node.
-pub type TrieNode = List<u8, MAX_BYTES_PER_NODE>;
-
-// Multiple contracts
-pub type Contracts = List<Contract, MAX_CONTRACTS_PER_BLOCK>;
-
-/// Contract bytecode.
-pub type Contract = List<u8, MAX_BYTES_PER_CONTRACT>;
-
-/// A block hash for a recent block, for use by the BLOCKHASH opcode.
-#[derive(PartialEq, Eq, Debug, Default, SimpleSerialize)]
-pub struct RecentBlockHash {
-    pub block_number: SszU64,
-    pub block_hash: SszH256,
-}
-
-/// An EIP-1186 style proof with the trie nodes replaced by their keccak hashes.
-#[derive(PartialEq, Eq, Debug, Default, SimpleSerialize)]
-pub struct CompactEip1186Proof {
-    pub address: SszH160,
-    pub balance: SszU256,
-    pub code_hash: SszH256,
-    pub nonce: SszU64,
-    pub storage_hash: SszH256,
-    pub account_proof: NodeIndices,
-    pub storage_proofs: CompactStorageProofs,
-}
-
-pub type CompactStorageProofs = List<CompactStorageProof, MAX_STORAGE_PROOFS_PER_ACCOUNT>;
-
-/// An EIP-1186 style proof with the trie nodes replaced by their keccak hashes.
-#[derive(PartialEq, Eq, Debug, Default, SimpleSerialize)]
-pub struct CompactStorageProof {
-    pub key: SszH256,
-    pub value: SszU256,
-    pub proof: NodeIndices,
-}
-
-/// An ordered list of indices that point to specific
-/// trie nodes in a different ordered list.
-///
-/// The purpose is deduplication as some nodes appear in different proofs within
-/// the same block.
-pub type NodeIndices = List<u16, MAX_NODES_PER_PROOF>;
-
-impl RequiredBlockState {
-    /// Creates a compact proof by separating trie nodes and contract code from the proof data.
-    pub fn create(
-        block_proofs: BlockProofs,
-        accessed_contracts: Vec<ContractBytes>,
-        accessed_blockhashes: Vec<(U64, H256)>,
-    ) -> Result<Self, TransferrableError> {
-        let node_set = get_trie_node_set(&block_proofs.proofs);
-        // TODO Remove this clone.
-        let node_map = get_node_map(node_set.clone());
-
-        let proof = RequiredBlockState {
-            compact_eip1186_proofs: get_compact_eip1186_proofs(&node_map, block_proofs)?,
-            contracts: contracts_to_ssz(accessed_contracts),
-            account_nodes: bytes_collection_to_ssz(node_set.account),
-            storage_nodes: bytes_collection_to_ssz(node_set.storage),
-            blockhashes: blockhashes_to_ssz(accessed_blockhashes)?,
-        };
-        Ok(proof)
-    }
-    pub fn to_ssz_bytes(self) -> Result<Vec<u8>, TransferrableError> {
-        let mut buf = vec![];
-        let _ssz_bytes_len = self.serialize(&mut buf)?;
-        Ok(buf)
-    }
-    pub fn to_ssz_snappy_bytes(self) -> Result<Vec<u8>, TransferrableError> {
-        let mut buf = vec![];
-        let ssz_kb = self.serialize(&mut buf)? / 1000;
-        let compressed = compress(buf)?;
-        let snappy_kb = compressed.len() / 1000;
-        println!("SSZ data compressed from {ssz_kb}KB to {snappy_kb}KB");
-        Ok(compressed)
-    }
-    pub fn from_ssz_bytes(ssz_data: Vec<u8>) -> Result<Self, TransferrableError> {
-        let proofs = self::deserialize(&ssz_data)?;
-        Ok(proofs)
-    }
-    pub fn from_ssz_snappy_bytes(snappy_data: Vec<u8>) -> Result<Self, TransferrableError> {
-        let data = decompress(snappy_data)?;
-        let proofs = self::deserialize(&data)?;
-        Ok(proofs)
-    }
+    let proof = RequiredBlockState {
+        compact_eip1186_proofs: get_compact_eip1186_proofs(&node_map, block_proofs)?,
+        contracts: contracts_to_ssz(accessed_contracts),
+        account_nodes: bytes_collection_to_ssz(node_set.account),
+        storage_nodes: bytes_collection_to_ssz(node_set.storage),
+        blockhashes: blockhashes_to_ssz(accessed_blockhashes)?,
+    };
+    Ok(proof)
 }
 
 /// Returns a map of node -> index. The index is later used to replace nodes

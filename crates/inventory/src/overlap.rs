@@ -6,7 +6,7 @@ use std::{collections::HashSet, fmt::Display};
 
 use thiserror::Error;
 
-use crate::cache::{get_transferrable_proofs_from_cache, CacheError};
+use crate::cache::{get_required_state_from_cache, CacheError};
 
 #[derive(Debug, Error)]
 pub enum OverlapError {
@@ -62,7 +62,7 @@ pub fn measure_proof_overlap(blocks: Vec<u64>) -> Result<DataSaved, OverlapError
     let mut storage_set: HashSet<Vec<u8>> = HashSet::new();
 
     for block in blocks {
-        let proof = get_transferrable_proofs_from_cache(block)?;
+        let proof = get_required_state_from_cache(block)?;
         for contract in proof.contracts.iter() {
             check_bytes(
                 &mut contract_saved_bytes,
