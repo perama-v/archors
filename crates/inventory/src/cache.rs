@@ -148,7 +148,8 @@ pub async fn store_blockhash_opcode_reads(url: &str, target_block: u64) -> Resul
     drop(trace_file);
 
     // Read the trace from file and filter for blockhash opcode.
-    let file = File::open(&trace_filename)?;
+    let file = File::open(&trace_filename)
+    .map_err(|e|CacheError::FileOpener { source: e, filename: trace_filename.to_owned() })?;
     let mut reader = BufReader::new(file);
     let stream =
         serde_json::Deserializer::from_reader(&mut reader).into_iter::<BlockDefaultTraceResponse>();
@@ -332,7 +333,8 @@ pub fn create_transferrable_proof(target_block: u64) -> Result<(), CacheError> {
 /// Retrieves the accessed-state proofs for a single block from cache.
 pub fn get_proofs_from_cache(block: u64) -> Result<BlockProofs, CacheError> {
     let proof_cache_path = CacheFileNames::new(block).prior_block_state_proofs();
-    let file = File::open(proof_cache_path)?;
+    let file = File::open(&proof_cache_path)
+        .map_err(|e|CacheError::FileOpener { source: e, filename: proof_cache_path })?;
     let reader = BufReader::new(file);
     let block_proofs = serde_json::from_reader(reader)?;
     Ok(block_proofs)
@@ -353,7 +355,8 @@ pub fn get_required_state_from_cache(block: u64) -> Result<RequiredBlockState, C
 /// Retrieves a single block that has been stored.
 pub fn get_block_from_cache(block: u64) -> Result<Block<Transaction>, CacheError> {
     let block_cache_path = CacheFileNames::new(block).block_with_transactions();
-    let file = File::open(block_cache_path)?;
+    let file = File::open(&block_cache_path)
+    .map_err(|e|CacheError::FileOpener { source: e, filename: block_cache_path })?;
     let reader = BufReader::new(file);
     let block = serde_json::from_reader(reader)?;
     Ok(block)
@@ -362,7 +365,8 @@ pub fn get_block_from_cache(block: u64) -> Result<Block<Transaction>, CacheError
 /// Retrieves all BLOCKHASH use values for a single block.
 pub fn get_blockhashes_from_cache(block: u64) -> Result<HashMap<U64, H256>, CacheError> {
     let blockhash_path = CacheFileNames::new(block).blockhashes();
-    let file = File::open(blockhash_path)?;
+    let file = File::open(&blockhash_path)
+    .map_err(|e|CacheError::FileOpener { source: e, filename: blockhash_path })?;
     let reader = BufReader::new(file);
     let accesses: BlockHashAccesses = serde_json::from_reader(reader)?;
     let mut map = HashMap::new();
@@ -377,7 +381,8 @@ pub(crate) type ContractBytes = Vec<u8>;
 /// Retrieves the contract code for a particular cached block.
 pub fn get_contracts_from_cache(block: u64) -> Result<HashMap<H256, ContractBytes>, CacheError> {
     let block_state_path = CacheFileNames::new(block).block_accessed_state_deduplicated();
-    let file = File::open(block_state_path)?;
+    let file = File::open(&block_state_path)
+    .map_err(|e|CacheError::FileOpener { source: e, filename: block_state_path })?;
     let reader = BufReader::new(file);
     let state: BlockStateAccesses = serde_json::from_reader(reader)?;
 
