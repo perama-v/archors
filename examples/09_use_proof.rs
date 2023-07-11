@@ -1,9 +1,6 @@
 use anyhow::Result;
-use archors_inventory::cache::{
-    get_block_from_cache, get_blockhashes_from_cache, get_contracts_from_cache,
-    get_proofs_from_cache, get_required_state_from_cache,
-};
-use archors_tracer::{state::BlockProofsBasic, trace::BlockExecutor};
+use archors_inventory::cache::{get_block_from_cache, get_required_state_from_cache};
+use archors_tracer::trace::BlockExecutor;
 
 /// Consume one block state proof.
 fn main() -> Result<()> {

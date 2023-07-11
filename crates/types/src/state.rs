@@ -16,7 +16,7 @@ use crate::{
 
 #[derive(Debug, Error)]
 pub enum StateError {
-    #[error("Derialize Error {0}")]
+    #[error("Deserialize Error {0}")]
     DerializeError(#[from] ssz_rs::DeserializeError),
     #[error("SSZ Error {0}")]
     SszError(#[from] SerializeError),
