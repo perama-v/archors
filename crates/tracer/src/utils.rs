@@ -1,11 +1,20 @@
+use std::hash;
+
+use archors_types::alias::{SszH256, SszU256, SszU64};
 use ethers::types::transaction::eip2930::AccessList;
 use hex::FromHexError;
-use revm::primitives::{B160, U256};
+use revm::primitives::{B160, B256, U256};
 use thiserror::Error;
 
 /// An error with tracing a block
 #[derive(Debug, Error, PartialEq)]
 pub enum UtilsError {
+    #[error("Unable to convert SSZ list to revm U256")]
+    InvalidU256List,
+    #[error("Unable to convert SSZ vector to revm U256")]
+    InvalidH256Vector,
+    #[error("Unable to convert SSZ bytes to u64")]
+    InvalidU64List,
     #[error("Unable to convert Ethers H256 ({0}) to revm U256 ")]
     H256ValueTooLarge(String),
     #[error("Unable to convert Ethers U256 ({0}) to revm U256 ")]
@@ -75,6 +84,36 @@ pub fn access_list_e_to_r(input: AccessList) -> RevmAccessList {
         .collect()
 }
 
+/// Convert SSZ U256 equivalent to revm U256.
+///
+/// Input is big endian.
+pub fn ssz_u256_to_ru256(input: SszU256) -> Result<U256, UtilsError> {
+    U256::try_from_be_slice(input.as_slice()).ok_or(UtilsError::InvalidU256List)
+}
+
+/// Convert SSZ H256 equivalent to revm U256.
+///
+/// Input is big endian.
+pub fn ssz_h256_to_ru256(input: SszH256) -> Result<U256, UtilsError> {
+    U256::try_from_be_slice(input.as_slice()).ok_or(UtilsError::InvalidH256Vector)
+}
+
+/// Convert SSZ U64 equivalent to u64.
+///
+/// Input is big endian.
+pub fn ssz_u64_to_u64(input: SszU64) -> Result<u64, UtilsError> {
+    let bytes = input.as_slice();
+    let num = u64::from_be_bytes(bytes.try_into().map_err(|_| UtilsError::InvalidU64List)?);
+    Ok(num)
+}
+
+/// Convert SSZ H256 equivalent to revm B256.
+///
+/// Input is big endian.
+pub fn ssz_h256_to_rb256(input: &SszH256) -> B256 {
+    B256::from_slice(input)
+}
+
 #[cfg(test)]
 mod test {
     use ethers::types::{transaction::eip2930::AccessListItem, H160, H256};
@@ -139,6 +178,28 @@ mod test {
         let address = B160::from_str(address).unwrap();
         let storage = U256::try_from_be_slice(&hex_decode(hash).unwrap()).unwrap();
         let expected: RevmAccessList = vec![(address, vec![storage])];
+        assert_eq!(derived, expected);
+    }
+
+    #[test]
+    fn test_ssz_u64_to_u64() {
+        let expected = 123456789_u64;
+        let bytes = expected.to_be_bytes();
+        let mut ssz = SszU64::default();
+        for byte in bytes {
+            ssz.push(byte)
+        }
+        let derived = ssz_u64_to_u64(ssz).unwrap();
+        assert_eq!(expected, derived);
+    }
+
+    #[test]
+    fn test_ssz_u256_to_ru256() {
+        let expected =
+            U256::from(0x0000000000000000000000000000000000000000000000000000000000001234);
+        let bytes = expected.to_be_bytes_vec();
+        let ssz = SszU256::try_from(bytes).unwrap();
+        let derived = ssz_u256_to_ru256(ssz).unwrap();
         assert_eq!(derived, expected);
     }
 }
