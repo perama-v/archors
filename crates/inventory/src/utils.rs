@@ -23,6 +23,8 @@ pub enum UtilsError {
     TryFromIntError(#[from] TryFromIntError),
     #[error("TryFromSlice utils error {0}")]
     TryFromSlice(#[from] TryFromSliceError),
+    #[error("Hash must be 32 bytes")]
+    InvalidHashLength,
 }
 
 /// Converts bytes to 0x-prefixed hex string.
@@ -103,4 +105,13 @@ pub fn u64_to_ssz_u64(input: U64) -> SszU64 {
 pub fn usize_to_u16(input: usize) -> Result<u16, UtilsError> {
     let num: u16 = input.try_into()?;
     Ok(num)
+}
+
+/// Converts an 0x-prefixed string to ethers H256.
+pub fn string_to_h256<T: AsRef<str>>(input: T) -> Result<H256, UtilsError> {
+    let bytes = hex_decode(&input)?;
+    if bytes.len() != 32 {
+        return Err(UtilsError::InvalidHashLength);
+    }
+    Ok(H256::from_slice(&bytes))
 }
