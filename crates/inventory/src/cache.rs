@@ -8,6 +8,7 @@ use std::{
 
 use archors_types::state::{RequiredBlockState, StateError};
 use ethers::{
+    abi::ethereum_types::FromStrRadixErr,
     types::{Block, Transaction, H160, H256, U64},
     utils::keccak256,
 };
@@ -19,14 +20,12 @@ use url::{ParseError, Url};
 use crate::{
     rpc::{
         debug_trace_block_default, debug_trace_block_prestate, eth_get_proof, get_block_by_number,
-        AccountProofResponse, BlockDefaultTraceResponse, BlockPrestateInnerTx,
-        BlockPrestateResponse, BlockResponse,
+        AccountProofResponse, BlockDefaultTraceResponse, BlockPrestateResponse,
+        BlockPrestateTransactions, BlockResponse,
     },
     transferrable::{state_from_parts, TransferrableError},
-    types::{
-        BlockHashAccesses, BlockHashString, BlockHashStrings, BlockProofs, BlockStateAccesses,
-    },
-    utils::{compress, decompress, hex_decode, UtilsError},
+    types::{BlockHashAccess, BlockHashAccesses, BlockProofs, BlockStateAccesses},
+    utils::{compress, decompress, hex_decode, string_to_h256, UtilsError},
 };
 
 static CACHE_DIR: &str = "data/blocks";
@@ -39,6 +38,8 @@ pub enum CacheError {
     ReqwestError(#[from] reqwest::Error),
     #[error("IO error {0}")]
     IoError(#[from] io::Error),
+    #[error("Unable to create block number from string {0}")]
+    InvalidBlockNumber(#[from] FromStrRadixErr),
     #[error("Unable to peek next EVM step")]
     EvmPeekAbsent,
     #[error("serde_json error {0}")]
@@ -82,11 +83,28 @@ pub async fn store_block_with_transactions(url: &str, target_block: u64) -> Resu
     Ok(())
 }
 
+/// Retrieves and stores required state for a particular cached block.
+///
+/// Creates a transferrable state parcel without the creation of intermediate cache files.
+pub async fn store_required_state(url: &str, target_block: u64) -> Result<(), CacheError> {
+    // Prestate-trace the block. Then deduplicate. Then getProof for prior block.
+    let tx_prestates = request_prestate_tracer(url, target_block).await?;
+    let accesses = BlockStateAccesses::from_prestate_accesses(tx_prestates);
+    let proofs = request_proofs(url, &accesses, target_block).await?;
+    // Parse from prestate-trace.
+    let contracts = contracts_from_state(accesses)?;
+    // Trace (no-memory) the block. Then filter for BLOCKHASH opcode.
+    let blockhashes = fetch_blockhashes(url, target_block).await?;
+
+    let data = state_from_parts(proofs, contracts.into_values().collect(), blockhashes)?;
+    save_transferrable_data(target_block, data)?;
+    Ok(())
+}
+
 /// Calls debug trace transaction with prestate tracer and caches the result.
 ///
 /// This inclues accounts, each with
 /// - balance
-///     -
 /// - code
 ///     - Needed to be able to execute the code.
 ///     - Codehash will be part of the block state proof.
@@ -97,6 +115,18 @@ pub async fn store_block_with_transactions(url: &str, target_block: u64) -> Resu
 ///     - Composed of (key, value).
 ///     - Will be used with eth_getProof.
 pub async fn store_block_prestate_tracer(url: &str, target_block: u64) -> Result<(), CacheError> {
+    let tx_prestates = request_prestate_tracer(url, target_block).await?;
+    let names = CacheFileNames::new(target_block);
+    fs::create_dir_all(names.dirname())?;
+    let mut block_file = File::create(names.block_prestate_trace())?;
+    block_file.write_all(serde_json::to_string_pretty(&tx_prestates)?.as_bytes())?;
+    Ok(())
+}
+
+async fn request_prestate_tracer(
+    url: &str,
+    target_block: u64,
+) -> Result<Vec<BlockPrestateTransactions>, CacheError> {
     let client = Client::new();
     let block_number_hex = format!("0x{:x}", target_block);
 
@@ -107,11 +137,19 @@ pub async fn store_block_prestate_tracer(url: &str, target_block: u64) -> Result
         .await?
         .json()
         .await?;
+    Ok(response.result)
+}
+
+/// Obtains and stores BLOCKHASH opcode use as cache file.
+pub async fn store_blockhash_opcode_reads(url: &str, target_block: u64) -> Result<(), CacheError> {
+    let hashes = fetch_blockhashes(url, target_block).await?;
 
     let names = CacheFileNames::new(target_block);
-    fs::create_dir_all(names.dirname())?;
-    let mut block_file = File::create(names.block_prestate_trace())?;
-    block_file.write_all(serde_json::to_string_pretty(&response.result)?.as_bytes())?;
+    let dir = names.dirname();
+    fs::create_dir_all(dir)?;
+    let mut blockhash_file = File::create(names.blockhashes())?;
+    blockhash_file.write_all(serde_json::to_string_pretty(&hashes)?.as_bytes())?;
+
     Ok(())
 }
 
@@ -123,7 +161,7 @@ pub async fn store_block_prestate_tracer(url: &str, target_block: u64) -> Result
 /// Uses a temp file to store the trace instead of holding in memory.
 ///
 /// Alternative, use terminal and use grep/jq to avoid disk write.
-pub async fn store_blockhash_opcode_reads(url: &str, target_block: u64) -> Result<(), CacheError> {
+async fn fetch_blockhashes(url: &str, target_block: u64) -> Result<BlockHashAccesses, CacheError> {
     let names = CacheFileNames::new(target_block);
     let dir = names.dirname();
     fs::create_dir_all(dir)?;
@@ -148,49 +186,50 @@ pub async fn store_blockhash_opcode_reads(url: &str, target_block: u64) -> Resul
     drop(trace_file);
 
     // Read the trace from file and filter for blockhash opcode.
-    let file = File::open(&trace_filename)
-    .map_err(|e|CacheError::FileOpener { source: e, filename: trace_filename.to_owned() })?;
+    let file = File::open(&trace_filename).map_err(|e| CacheError::FileOpener {
+        source: e,
+        filename: trace_filename.to_owned(),
+    })?;
     let mut reader = BufReader::new(file);
     let stream =
         serde_json::Deserializer::from_reader(&mut reader).into_iter::<BlockDefaultTraceResponse>();
 
-    let mut blockhash_reads: HashMap<String, String> = HashMap::new();
+    let mut blockhash_reads: HashMap<U64, H256> = HashMap::new();
     for response in stream {
         for tx in response?.result {
             let mut steps = tx.result.struct_logs.iter().peekable();
             while let Some(step) = steps.next() {
                 if step.op == "BLOCKHASH" {
-                    let block_number = step.stack.last().ok_or(CacheError::StackEmpty)?;
-                    let block_hash = steps
+                    let block_number_string = step.stack.last().ok_or(CacheError::StackEmpty)?;
+                    let block_number = U64::from_str_radix(block_number_string, 16)
+                        .map_err(CacheError::InvalidBlockNumber)?;
+                    let block_hash_string = steps
                         .peek()
                         .ok_or(CacheError::EvmPeekAbsent)?
                         .stack
                         .last()
                         .ok_or(CacheError::StackEmpty)?;
+                    let block_hash = string_to_h256(block_hash_string)?;
                     blockhash_reads.insert(block_number.to_owned(), block_hash.to_owned());
                 }
             }
         }
     }
-    let hashes = BlockHashStrings {
+
+    let hashes = BlockHashAccesses {
         blockhash_accesses: blockhash_reads
             .into_iter()
-            .map(|(block_number, block_hash)| BlockHashString {
+            .map(|(block_number, block_hash)| BlockHashAccess {
                 block_number,
                 block_hash,
             })
-            .collect::<Vec<BlockHashString>>(),
+            .collect::<Vec<BlockHashAccess>>(),
     };
-
-    let names = CacheFileNames::new(target_block);
-    let dir = names.dirname();
-    fs::create_dir_all(dir)?;
-    let mut blockhash_file = File::create(names.blockhashes())?;
-    blockhash_file.write_all(serde_json::to_string_pretty(&hashes)?.as_bytes())?;
 
     // Remove the temp trace file
     fs::remove_file(trace_filename)?;
-    Ok(())
+
+    Ok(hashes)
 }
 
 /// Uses a cached block prestate and groups account state data when it is accessed
@@ -205,12 +244,8 @@ pub fn store_deduplicated_state(target_block: u64) -> Result<(), CacheError> {
         source: e,
         filename,
     })?;
-    let block: Vec<BlockPrestateInnerTx> = serde_json::from_str(&data)?;
-
-    let mut state_accesses = BlockStateAccesses::new();
-    for tx_state in block {
-        state_accesses.include_new_state_accesses_for_tx(&tx_state.result);
-    }
+    let block: Vec<BlockPrestateTransactions> = serde_json::from_str(&data)?;
+    let state_accesses = BlockStateAccesses::from_prestate_accesses(block);
     fs::create_dir_all(names.dirname())?;
     let mut block_file = File::create(names.block_accessed_state_deduplicated())?;
     block_file.write_all(serde_json::to_string_pretty(&state_accesses)?.as_bytes())?;
@@ -226,7 +261,6 @@ pub fn store_deduplicated_state(target_block: u64) -> Result<(), CacheError> {
 /// The prior block's state root is the root after transactions have been applied.
 /// Hence it is the state on which the target block should be applied.
 pub async fn store_state_proofs(url: &str, target_block: u64) -> Result<(), CacheError> {
-    let client = Client::new();
     let names = CacheFileNames::new(target_block);
     let filename = names.block_accessed_state_deduplicated();
     let data = fs::read_to_string(&filename).map_err(|e| CacheError::FileOpener {
@@ -234,7 +268,25 @@ pub async fn store_state_proofs(url: &str, target_block: u64) -> Result<(), Cach
         filename,
     })?;
     let state_accesses: BlockStateAccesses = serde_json::from_str(&data)?;
-    let accounts_to_prove = state_accesses.get_all_accounts_to_prove();
+    let block_proofs = request_proofs(url, &state_accesses, target_block).await?;
+    fs::create_dir_all(names.dirname())?;
+    let mut block_file = File::create(names.prior_block_state_proofs())?;
+    block_file.write_all(serde_json::to_string_pretty(&block_proofs)?.as_bytes())?;
+    Ok(())
+}
+
+/// Calls a node eth_getProof endpoint for every given accessed state.
+///
+/// The target block is the block which will be traced. The getProof call will
+/// ask for the prior block, because proofs are post-execution. That way, the proof
+/// will be "state ready to trace the target block".
+async fn request_proofs(
+    url: &str,
+    accesses: &BlockStateAccesses,
+    target_block: u64,
+) -> Result<BlockProofs, CacheError> {
+    let client = Client::new();
+    let accounts_to_prove = accesses.get_all_accounts_to_prove();
 
     let mut block_proofs = BlockProofs {
         proofs: HashMap::new(),
@@ -253,10 +305,7 @@ pub async fn store_state_proofs(url: &str, target_block: u64) -> Result<(), Cach
             .await?;
         block_proofs.proofs.insert(account, response.result);
     }
-    fs::create_dir_all(names.dirname())?;
-    let mut block_file = File::create(names.prior_block_state_proofs())?;
-    block_file.write_all(serde_json::to_string_pretty(&block_proofs)?.as_bytes())?;
-    Ok(())
+    Ok(block_proofs)
 }
 
 /// Uses a cached deduplicated block prestate compresses the data.
@@ -313,17 +362,19 @@ pub fn compress_proofs(target_block: u64) -> Result<(), CacheError> {
 /// an SSZ+snappy encoded format redy for P2P transfer.
 pub fn create_transferrable_proof(target_block: u64) -> Result<(), CacheError> {
     let proofs = get_proofs_from_cache(target_block)?;
-    let contracts = get_contracts_from_cache(target_block)?;
+    let contracts = get_contracts_from_cache(target_block)?
+        .into_values()
+        .collect();
     let blockhashes = get_blockhashes_from_cache(target_block)?;
 
-    let names = CacheFileNames::new(target_block);
+    let transferrable = state_from_parts(proofs, contracts, blockhashes)?;
+    save_transferrable_data(target_block, transferrable)?;
+    Ok(())
+}
 
-    let transferrable = state_from_parts(
-        proofs,
-        contracts.into_values().collect(),
-        blockhashes.into_iter().collect(),
-    )?;
-    let ssz = transferrable.to_ssz_bytes()?;
+fn save_transferrable_data(target_block: u64, data: RequiredBlockState) -> Result<(), CacheError> {
+    let names = CacheFileNames::new(target_block);
+    let ssz = data.to_ssz_bytes()?;
     let bytes = compress(ssz)?;
     let mut file = File::create(names.prior_block_transferrable_state_proofs())?;
     file.write_all(&bytes)?;
@@ -333,8 +384,10 @@ pub fn create_transferrable_proof(target_block: u64) -> Result<(), CacheError> {
 /// Retrieves the accessed-state proofs for a single block from cache.
 pub fn get_proofs_from_cache(block: u64) -> Result<BlockProofs, CacheError> {
     let proof_cache_path = CacheFileNames::new(block).prior_block_state_proofs();
-    let file = File::open(&proof_cache_path)
-        .map_err(|e|CacheError::FileOpener { source: e, filename: proof_cache_path })?;
+    let file = File::open(&proof_cache_path).map_err(|e| CacheError::FileOpener {
+        source: e,
+        filename: proof_cache_path,
+    })?;
     let reader = BufReader::new(file);
     let block_proofs = serde_json::from_reader(reader)?;
     Ok(block_proofs)
@@ -355,25 +408,25 @@ pub fn get_required_state_from_cache(block: u64) -> Result<RequiredBlockState, C
 /// Retrieves a single block that has been stored.
 pub fn get_block_from_cache(block: u64) -> Result<Block<Transaction>, CacheError> {
     let block_cache_path = CacheFileNames::new(block).block_with_transactions();
-    let file = File::open(&block_cache_path)
-    .map_err(|e|CacheError::FileOpener { source: e, filename: block_cache_path })?;
+    let file = File::open(&block_cache_path).map_err(|e| CacheError::FileOpener {
+        source: e,
+        filename: block_cache_path,
+    })?;
     let reader = BufReader::new(file);
     let block = serde_json::from_reader(reader)?;
     Ok(block)
 }
 
 /// Retrieves all BLOCKHASH use values for a single block.
-pub fn get_blockhashes_from_cache(block: u64) -> Result<HashMap<U64, H256>, CacheError> {
+pub fn get_blockhashes_from_cache(block: u64) -> Result<BlockHashAccesses, CacheError> {
     let blockhash_path = CacheFileNames::new(block).blockhashes();
-    let file = File::open(&blockhash_path)
-    .map_err(|e|CacheError::FileOpener { source: e, filename: blockhash_path })?;
+    let file = File::open(&blockhash_path).map_err(|e| CacheError::FileOpener {
+        source: e,
+        filename: blockhash_path,
+    })?;
     let reader = BufReader::new(file);
     let accesses: BlockHashAccesses = serde_json::from_reader(reader)?;
-    let mut map = HashMap::new();
-    for access in accesses.blockhash_accesses {
-        map.insert(access.block_number, access.block_hash);
-    }
-    Ok(map)
+    Ok(accesses)
 }
 
 pub(crate) type ContractBytes = Vec<u8>;
@@ -381,11 +434,19 @@ pub(crate) type ContractBytes = Vec<u8>;
 /// Retrieves the contract code for a particular cached block.
 pub fn get_contracts_from_cache(block: u64) -> Result<HashMap<H256, ContractBytes>, CacheError> {
     let block_state_path = CacheFileNames::new(block).block_accessed_state_deduplicated();
-    let file = File::open(&block_state_path)
-    .map_err(|e|CacheError::FileOpener { source: e, filename: block_state_path })?;
+    let file = File::open(&block_state_path).map_err(|e| CacheError::FileOpener {
+        source: e,
+        filename: block_state_path,
+    })?;
     let reader = BufReader::new(file);
     let state: BlockStateAccesses = serde_json::from_reader(reader)?;
+    contracts_from_state(state)
+}
 
+/// Extracts contract bytecode from accessed state.
+fn contracts_from_state(
+    state: BlockStateAccesses,
+) -> Result<HashMap<H256, ContractBytes>, CacheError> {
     let mut code_map = HashMap::new();
     for (_, account) in state.access_data {
         if let Some(code_string) = account.code {

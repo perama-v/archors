@@ -4,6 +4,8 @@ use std::{collections::HashMap, fmt::Display};
 use ethers::types::{EIP1186ProofResponse, H160, H256, U64};
 use serde::{Deserialize, Serialize};
 
+use crate::rpc::BlockPrestateTransactions;
+
 /// Helper for caching
 #[derive(Deserialize, Serialize)]
 pub struct BlockProofs {
@@ -22,6 +24,19 @@ pub struct BasicBlockState {
 #[derive(Deserialize, Serialize)]
 pub struct BlockHashAccesses {
     pub blockhash_accesses: Vec<BlockHashAccess>,
+}
+
+impl BlockHashAccesses {
+    pub fn to_hashmap(self) -> HashMap<U64, H256> {
+        let mut map = HashMap::new();
+        for access in self.blockhash_accesses {
+            map.insert(access.block_number, access.block_hash);
+        }
+        map
+    }
+    pub fn to_unique_pairs(self) -> Vec<(U64, H256)> {
+        self.to_hashmap().into_iter().collect()
+    }
 }
 
 /// Single BLOCKASH opcode use.
@@ -103,6 +118,14 @@ impl Display for BlockStateAccesses {
 }
 
 impl BlockStateAccesses {
+    /// Filters state accessed by multiple transactions, removing duplicates.
+    pub(crate) fn from_prestate_accesses(block: Vec<BlockPrestateTransactions>) -> Self {
+        let mut state_accesses = Self::new();
+        for tx_state in block {
+            state_accesses.include_new_state_accesses_for_tx(&tx_state.result);
+        }
+        state_accesses
+    }
     /// Adds new state to the state access record if the state has not previously
     /// been added by a prior transaction.
     ///

@@ -37,11 +37,11 @@ pub(crate) struct TxPrestateResponse {
 pub(crate) struct BlockPrestateResponse {
     id: u32,
     jsonrpc: String,
-    pub(crate) result: Vec<BlockPrestateInnerTx>,
+    pub(crate) result: Vec<BlockPrestateTransactions>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-pub(crate) struct BlockPrestateInnerTx {
+pub(crate) struct BlockPrestateTransactions {
     pub(crate) result: TransactionAccountStates,
 }
 

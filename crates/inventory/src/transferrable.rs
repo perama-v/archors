@@ -26,7 +26,7 @@ use thiserror::Error;
 
 use crate::{
     cache::ContractBytes,
-    types::BlockProofs,
+    types::{BlockHashAccesses, BlockProofs},
     utils::{
         h160_to_ssz_h160, h256_to_ssz_h256, u256_to_ssz_u256, u64_to_ssz_u64, usize_to_u16,
         UtilsError,
@@ -51,7 +51,7 @@ pub enum TransferrableError {
 pub fn state_from_parts(
     block_proofs: BlockProofs,
     accessed_contracts: Vec<ContractBytes>,
-    accessed_blockhashes: Vec<(U64, H256)>,
+    accessed_blockhashes: BlockHashAccesses,
 ) -> Result<RequiredBlockState, TransferrableError> {
     let node_set = get_trie_node_set(&block_proofs.proofs);
     // TODO Remove this clone.
@@ -62,7 +62,7 @@ pub fn state_from_parts(
         contracts: contracts_to_ssz(accessed_contracts),
         account_nodes: bytes_collection_to_ssz(node_set.account),
         storage_nodes: bytes_collection_to_ssz(node_set.storage),
-        blockhashes: blockhashes_to_ssz(accessed_blockhashes)?,
+        blockhashes: blockhashes_to_ssz(accessed_blockhashes.to_unique_pairs())?,
     };
     Ok(proof)
 }
