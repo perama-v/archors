@@ -86,11 +86,11 @@ pub async fn store_block_with_transactions(url: &str, target_block: u64) -> Resu
 /// Retrieves and stores required state for a particular cached block.
 ///
 /// Creates a transferrable state parcel without the creation of intermediate cache files.
-pub async fn store_required_state(url: &str, target_block: u64) -> Result<(), CacheError> {
+pub async fn store_required_state(url: &str, get_proof_url: &str, target_block: u64) -> Result<(), CacheError> {
     // Prestate-trace the block. Then deduplicate. Then getProof for prior block.
     let tx_prestates = request_prestate_tracer(url, target_block).await?;
     let accesses = BlockStateAccesses::from_prestate_accesses(tx_prestates);
-    let proofs = request_proofs(url, &accesses, target_block).await?;
+    let proofs = request_proofs(get_proof_url, &accesses, target_block).await?;
     // Parse from prestate-trace.
     let contracts = contracts_from_state(accesses)?;
     // Trace (no-memory) the block. Then filter for BLOCKHASH opcode.
