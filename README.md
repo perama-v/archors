@@ -52,6 +52,7 @@ node must provide both:
 |7|inventory|collect stats on bytes/gas for proofs|
 |8|verify|verify merkle proof for block|
 |9|tracer|locally produce `debug_traceTransaction` / `debug_traceBlock` using proof data|
+|10|inventory|obtain required state in one pass|
 
 ## Use case
 
