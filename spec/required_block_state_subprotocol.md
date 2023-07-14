@@ -1,6 +1,6 @@
-# Execution State Network
+# Required Block State Network
 
-This document is the specification for the sub-protocol that supports on-demand availability of state data from the execution chain.
+This document is the specification for the sub-protocol that supports on-demand availability of state data from the execution chain to enable archive functionality.
 
 > 🚧 The spec is for design space exploration and is independent from the Portal Network
 
