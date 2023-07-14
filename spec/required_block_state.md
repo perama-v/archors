@@ -20,6 +20,9 @@ In addition to the proof, BLOCKHASH opcode reads are also included.
 Together, anyone with an ability to verify that a historical block header is canonical
 can trustlessly trace a block without posession of an archive node.
 
+The format of the data is deterministic, so that two peers creating the same
+data will produce identical structures.
+
 ## Table of Contents
 
 
@@ -39,6 +42,11 @@ Ethereum [consensus](#ethereum-consensus-specification) and
 [ssz](#ssz-spec) specifications. Part of this
 rationale is that SSZ serialization is used in this index to benefit from ecosystem tooling.
 No doctesting is applied and functions are not likely to be executable.
+
+Where a list/vector is said to be sorted, it indicates that the elements are ordered
+lexicographically when in hexadecimal representation (e.g., `[0x12, 0x3e, 0xe3]`) prior
+to conversion to ssz format. For elements that are containers, the ordering is determined by
+the first element in the container.
 
 ### Endianness
 
@@ -89,22 +97,30 @@ Constants derived from [design parameters](#design-parameters).
 
 ### RequiredBlockState
 
-The entire RequiredBlockState data format is represented by the following.
+The entire `RequiredBlockState` data format is represented by the following.
 
 As proofs sometimes have common internal nodes, the nodes are kept separate.
 A proof consists of a list of indices, indicating which node is used.
 
 ```python
 class RequiredBlockState(Container):
+    # sorted
     compact_eip1186_proofs: List[CompactEip1186Proof, MAX_ACCOUNT_PROOFS_PER_BLOCK]
+    # sorted
     contracts: List[Contract, MAX_CONTRACTS_PER_BLOCK]
+    # sorted
     account_nodes: List[TrieNode, MAX_ACCOUNT_NODES_PER_BLOCK]
+    # sorted
     storage_nodes: List[TrieNode, MAX_STORAGE_NODES_PER_BLOCK]
+    # sorted
     block_hashes: List[RecentBlockHash, MAX_BLOCKHASH_READS_PER_BLOCK]
 ```
 
+> Note that merkle patricia proofs may be replaced by verkle proofs after some hard fork
+
 ### CompactEip1186Proof
 
+Proof nodes are
 ```python
 class CompactEip1186Proof(Container):
     address: Vector[uint8, 20]
@@ -112,7 +128,9 @@ class CompactEip1186Proof(Container):
     code_hash: Vector[uint8, 32]
     nonce: List[uint8, 8]
     storage_hash: Vector[uint8, 32]
+    # sorted: node nearest to root first
     account_proof: List[uint16, MAX_NODES_PER_PROOF]
+    # sorted
     storage_proofs: List[CompactStorageProof, MAX_STORAGE_PROOFS_PER_ACCOUNT]
 ```
 
@@ -125,7 +143,10 @@ Contract = List[uint8,  MAX_BYTES_PER_CONTRACT]
 
 ### TrieNode
 
-An alias for a node in a merkle proof.
+An alias for a node in a merkle patricia proof.
+
+Merkle Patricia Trie (MPT) proofs consist of a list of witness nodes that correspond to each trie node that consists of various data elements depending on the type of node (e.g. blank, branch, extension, leaf).  When serialized, each witness node is represented as an RLP serialized list of the component elements.
+
 ```python
 TrieNode = List[uint8,  MAX_BYTES_PER_NODE]
 ```
@@ -140,11 +161,13 @@ class RecentBlockHash(Container):
 
 ### CompactStorageProof
 
-The proof consists of a list of indices, one per node.
+The proof consists of a list of indices, one per node. The indices refer
+to the nodes in `TrieNode`.
 ```python
 class CompactStorageProof(Container):
     key: Vector[uint8, 32]
     value: List[uint8, 8]
+    # sorted: node nearest to root first
     proof: List[uint16, MAX_NODES_PER_PROOF]
 ```
 
@@ -170,5 +193,5 @@ block hashes. Check merkle proofs in the requied block state.
 ### Trace block locally
 
 Obtain a block (eth_getBlockByNumber) with transactions. Use an EVM
-and load it with the RequiredBlockState and the block. Execute
+and load it with the `RequiredBlockState` and the block. Execute
 the block and observe the trace.
