@@ -4,6 +4,11 @@ This document is the specification for the sub-protocol that supports on-demand 
 
 > 🚧 The spec is for design space exploration and is independent from the Portal Network
 
+This is the sub-protocol description for the `RequiredBlockState` data format described in [./spec/required_block_state_format.md](./required_block_state_format.md). This format implies a
+distributed network of approximately 30TB total size.
+
+These data, when combined with data in the History sub-protocol allow EVM re-execution (tracing) for arbitrary historical blocks.
+
 ## Overview
 
 The execution state network is a [Kademlia](https://pdos.csail.mit.edu/~petar/papers/maymounkov-kademlia-lncs.pdf) DHT that uses the [Portal Wire Protocol](./portal-wire-protocol.md) to establish an overlay network on top of the [Discovery v5](https://github.com/ethereum/devp2p/blob/master/discv5/discv5-wire.md) protocol.
@@ -89,7 +94,7 @@ The derivation function for Content ID values is defined separately for each dat
 
 #### Protocol Identifier
 
-As specified in the [Protocol identifiers](./portal-wire-protocol.md#protocol-identifiers) section of the Portal wire protocol, the `protocol` field in the `TALKREQ` message **MUST** contain the value of:
+As specified in the protocol identifiers section of the Portal wire protocol, the `protocol` field in the `TALKREQ` message **MUST** contain the value of:
 
 `0x5050` (placeholder only)
 
@@ -133,7 +138,7 @@ A node should track their own radius value and provide this value in all Ping or
 
 #### Required block state
 
-See [./spec/required_block_state.md](./portal_spec_required_block_state.md) for
+See [./spec/required_block_state_format.md](./required_block_state_format.md) for
 the specification of the `RequiredBlockState` data type.
 
 The content is addressed in the portal network using the blockhash, similar to the block header
@@ -191,7 +196,7 @@ The network is most optimally populated as follows:
 - Keep up with the chain tip with non-archive nodes. Full nodes have
 have eth_getProof and eth_debugTraceBlock capacity to a depth of about 256
 
-### Denial of service
+### Denial of service - considerations
 
 The `RequiredBlockState` data is approximately 2.5MB on average (~167 kb/Mgas) by estimation. A bridge nodes could gossip data that has many valid parts, but some invalid data. While
 a recipient portal node can independently identify and reject this, it constitutes a denial of service vector. One specific vector is including valid state proof for state that is not required
@@ -203,3 +208,10 @@ Another mitigation might be to have nodes signal if they have re-executed a give
 
 Critically, the recipient is not vulnerable to incorrect state data as proofs are included and are quick to verify. `RequiredBlockState` is a self contained package that does not need
 additional network requests to verify.
+
+### Denial of service - alternative designs
+
+Note that there are complexities with other approaches. Consider an alternative historical state network design where nodes store proofs for all history of individual accounts (flat distributed storage with reverse diffs, each with a state proof). To re-execute a block,
+one requests the required state from multiple nodes, which can happen by one of two means:
+- One has a list of states required. This list is a denial of service vector, one can create incorrect lists that cannot be rejected without tracing the block. Except this time the state must be obtained from the network. So the denial of service also can create network amplification.
+- Async EVM. Start executing the block and when a new state is required, pause and request it from the network. The time it would take to run one `debug_traceBlockByNumber` could be multiple minutes(network response time x number of states accessed).

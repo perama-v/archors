@@ -5,6 +5,8 @@ trace a single Ethereum block.
 
 > Note: This is a draft to test a format for distributed archival nodes.
 
+This data structure may be suitable as a sub-protocol in the Portal Network,
+see the accompanying sub-protocol spec [./spec/required_block_state_subprotocol.md](./required_block_state_subprotocol.md)
 ## Abstract
 
 A specification for peer-to-peer distributable data that can enables trustless
@@ -120,7 +122,6 @@ class RequiredBlockState(Container):
 
 ### CompactEip1186Proof
 
-Proof nodes are
 ```python
 class CompactEip1186Proof(Container):
     address: Vector[uint8, 20]
