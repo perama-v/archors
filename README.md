@@ -2,6 +2,12 @@
 
 **arch**ival sciss**ors**: A tool for single Ethereum archival block state proofs.
 
+The data specified here is both necesessary and sufficient for tracing an Ethereum block.
+
+- Data spec: [./spec/required_block_state_format.md](spec/required_block_state_format.md)
+- Network spec: [./spec/required_block_state_subprotocol.md](./spec/required_block_state_subprotocol.md)
+- Library example: [./examples/10_cache_required_state.rs](./examples/10_cache_required_state.rs)
+
 ## Why
 
 To send a single historical block (as an historical state proof) to a peer and have
