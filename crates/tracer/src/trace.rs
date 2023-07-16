@@ -23,6 +23,8 @@ pub enum TraceError {
     TxEnvError { source: EvmError, index: usize },
     #[error("Unable to execute transaction (tx_index {index}) {source}")]
     TxExecutionError { source: EvmError, index: usize },
+    #[error("Transaction does not have an index")]
+    TxWithoutIndex
 }
 
 /// Holds an EVM configured for single block execution.
@@ -51,7 +53,8 @@ impl BlockExecutor {
     ///
     /// Preceeding transactions are executed but not traced.
     pub fn trace_transaction(mut self, target_tx_index: usize) -> Result<(), TraceError> {
-        for (index, tx) in self.block.transactions.into_iter().enumerate() {
+        for tx in self.block.transactions.into_iter() {
+            let index = tx.transaction_index.ok_or(TraceError::TxWithoutIndex)?.as_u64() as usize;
             if index == target_tx_index {
                 // Execute with tracing.
                 let outcome = self
