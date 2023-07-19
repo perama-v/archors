@@ -2,9 +2,13 @@
 //! to be able to pipe any EIP-3155 output to this library.
 //!
 //! The input is new-line delineated JSON stream of EVM steps from stdin.
+//!
+//! Note that a line in a trace is pre-application of the opcode. E.g., the opcode will
+//! use the values in the stack on the same line.
 
 use std::{fmt::Display, io::BufRead};
 
+use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use thiserror::Error;
@@ -40,12 +44,17 @@ impl Display for Juncture<'_> {
             Call { to: _ } | CallCode { to: _ } | DelegateCall { to: _ } | StaticCall { to: _ } => {
                 write!(f, "{} {}", self.action, self.current_context)
             }
+            PayCall { to: _ } => write!(
+                f,
+                "{} from {}",
+                self.action, self.current_context.message_sender
+            ),
             _ => write!(f, "{}", self.action),
         }
     }
 }
 
-#[derive(Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct EvmStep {
     pub(crate) pc: u64,
@@ -57,6 +66,7 @@ pub(crate) struct EvmStep {
     pub(crate) depth: u64,
     pub(crate) op_name: String,
     pub(crate) memory: Option<Vec<String>>,
+    pub(crate) processed_step: Option<ProcessedStep>,
 }
 
 impl EvmStep {
@@ -68,7 +78,7 @@ impl EvmStep {
     }
 }
 
-#[derive(Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) enum ProcessedStep {
     Call {
@@ -103,6 +113,10 @@ pub(crate) enum ProcessedStep {
     },
     /// A call variant made to a precompile contract.
     Precompile,
+    /// A call variant made to an account with no code (just pays ether to it).
+    PayCall {
+        to: String,
+    },
     Return,
     Revert,
     SelfDestruct,
@@ -130,6 +144,10 @@ impl Display for ProcessedStep {
                 stack_0: _,
                 stack_1: _,
             } => Ok(()),
+            PayCall { to } => write!(
+                f,
+                "Ether paid to codeless account {to} (via a call-like opcode)"
+            ),
             Precompile => write!(f, "Precompile used"),
             Return => write!(f, "Returned"),
             Revert => write!(f, "Reverted"),
@@ -146,7 +164,8 @@ pub fn process_trace() {
     let reader = stdin.lock();
 
     let mut transaction_counter = 1;
-    let mut context: Vec<Context> = vec![];
+    let mut context: Vec<Context> = vec![Context::default()];
+    let mut pending_context: Option<Context> = None;
 
     reader
         .lines()
@@ -158,27 +177,55 @@ pub fn process_trace() {
             Ok(l) => Some(l),
             Err(_) => None, // Not an EvmStep (e.g., output)
         })
-        .filter_map(|step| {
-            let processed = process_step(&step);
-            if processed.is_some() {
-                // Debugging.
-                println!("depth: {}", step.depth)
+        .filter_map(|mut step| {
+            // Add processed information to step.
+            // Exclude uninteresting steps (ADD, ISZERO, ...)
+            match process_step(&step) {
+                Some(processed) => {
+                    step.processed_step = Some(processed);
+                    Some(step)
+                }
+                None => None,
             }
-            processed
         })
-        .for_each(|step| {
-            match update_context(&mut context, &step) {
-                Ok(_) => {}
+        .tuple_windows() // Clone the step to give access to the next step.
+        .for_each(|(step, peek)| {
+            if let Some(c) = &pending_context {
+                context.push(c.clone());
+                pending_context = None;
+            }
+            // Peek at next EVM step to differentiate CALL-type to addresses with/without code.
+            let mut processed = step.processed_step.unwrap();
+            let context_added = peek.depth - step.depth == 1;
+            if !context_added {
+                // Context depth did not increase. Called address must have no code.
+                processed = convert_codeless_call(processed);
+            }
+
+            match context_update(&context, &processed) {
+                Ok(ContextUpdate::None) => {}
+                Ok(ContextUpdate::Add(new_context)) => {
+                    // While at the CALL-type opcode, save the context details (msg.sender etc.).
+                    pending_context = Some(new_context);
+                }
+                Ok(ContextUpdate::Remove) => {
+                    match context.pop().ok_or(FilterError::AbsentContext) {
+                        Ok(_) => todo!(),
+                        Err(_) => todo!(),
+                    }
+                }
                 Err(_) => todo!(),
             };
+
             match context.last() {
                 Some(current_context) => {
                     let juncture = Juncture {
-                        action: &step,
+                        action: &processed,
                         current_context,
-                        context_depth: context.len(),
+                        context_depth: step.depth as usize,
                         transaction: transaction_counter,
                     };
+
                     println!("{juncture}");
                     //println!("{}", json!(juncture));
                 }
@@ -186,19 +233,31 @@ pub fn process_trace() {
                     // End of transaction
                     let new_context = Context::default();
                     let juncture = Juncture {
-                        action: &step,
+                        action: &processed,
                         current_context: &new_context,
-                        context_depth: context.len(),
+                        context_depth: step.depth as usize,
                         transaction: transaction_counter,
                     };
 
                     transaction_counter += 1;
-                    context.push(Context::default());
+                    pending_context = Some(Context::default());
+                    //println!("Transaction incremented {}", transaction_counter);
+
                     println!("{juncture}");
                     //println!("{}", json!(juncture));
                 }
             };
         });
+}
+
+fn convert_codeless_call(processed: ProcessedStep) -> ProcessedStep {
+    match processed {
+        ProcessedStep::Call { to } => ProcessedStep::PayCall { to },
+        ProcessedStep::CallCode { to } => ProcessedStep::PayCall { to },
+        ProcessedStep::DelegateCall { to } => ProcessedStep::PayCall { to },
+        ProcessedStep::StaticCall { to } => ProcessedStep::PayCall { to },
+        step => step, // return unchanged
+    }
 }
 
 impl TryFrom<&EvmStep> for ProcessedStep {
@@ -287,7 +346,7 @@ impl TryFrom<&EvmStep> for ProcessedStep {
 }
 
 /// Context during EVM execution.
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Context {
     /// Address where the code being executed resides
@@ -344,60 +403,66 @@ fn stack_nth(stack: &[String], index: usize) -> Result<String, FilterError> {
         .to_owned())
 }
 
-/// If a opcode affects the call context, record the change.
-fn update_context(context: &mut Vec<Context>, step: &ProcessedStep) -> Result<(), FilterError> {
+/// An opcode may cause a change to the context that will apply to the next
+/// EVM step.
+enum ContextUpdate {
+    None,
+    Add(Context),
+    Remove,
+}
+
+/// If a opcode affects the call context, determine the new context it would create.
+///
+/// It may ultimetely not be applied (e.g., CALL to EOA).
+fn context_update(context: &[Context], step: &ProcessedStep) -> Result<ContextUpdate, FilterError> {
     match step {
         ProcessedStep::Call { to } | ProcessedStep::StaticCall { to } => {
             if is_precompile(to) {
-                return Ok(());
+                return Ok(ContextUpdate::None);
             }
             let previous = context.last().ok_or(FilterError::AbsentContext)?;
-            context.push(Context {
+            Ok(ContextUpdate::Add(Context {
                 code_address: to.clone(),
                 message_sender: previous.message_sender.clone(),
                 storage_address: to.clone(),
-            })
+            }))
         }
         ProcessedStep::CallCode { to } => {
             if is_precompile(to) {
-                return Ok(());
+                return Ok(ContextUpdate::None);
             }
             let previous = context.last().ok_or(FilterError::AbsentContext)?;
-            context.push(Context {
+            Ok(ContextUpdate::Add(Context {
                 code_address: to.clone(),
                 message_sender: previous.code_address.clone(), // important
                 storage_address: previous.storage_address.clone(),
-            })
+            }))
         }
         ProcessedStep::DelegateCall { to } => {
             if is_precompile(to) {
-                return Ok(());
+                return Ok(ContextUpdate::None);
             }
             let previous = context.last().ok_or(FilterError::AbsentContext)?;
-            context.push(Context {
+            Ok(ContextUpdate::Add(Context {
                 code_address: to.clone(),
                 message_sender: previous.message_sender.clone(), // important
                 storage_address: previous.storage_address.clone(),
-            })
+            }))
         }
         ProcessedStep::Return
         | ProcessedStep::Revert
         | ProcessedStep::SelfDestruct
-        | ProcessedStep::Stop => {
-            context.pop().ok_or(FilterError::AbsentContext)?;
-            return Ok(());
-        }
-        _ => {}
+        | ProcessedStep::Stop => Ok(ContextUpdate::Remove),
+        _ => Ok(ContextUpdate::None),
     }
-    Ok(())
 }
 
 /// Addresses of known precompile contracts
 ///
 /// Useful because precompiles do not create a new call context.
 fn is_precompile<T: AsRef<str>>(address: T) -> bool {
-    match address.as_ref() {
-        "0x1" | "0x2" | "0x3" | "0x4" | "0x5" | "0x6" | "0x7" | "0x8" | "0x9" => true,
-        _ => false,
-    }
+    matches!(
+        address.as_ref(),
+        "0x1" | "0x2" | "0x3" | "0x4" | "0x5" | "0x6" | "0x7" | "0x8" | "0x9"
+    )
 }
