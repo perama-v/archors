@@ -132,14 +132,16 @@ impl Display for ProcessedStep {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use ProcessedStep::*;
         match self {
-            Call { to: _ } | CallCode { to: _ } | DelegateCall { to: _ } | StaticCall { to: _ } => {
-                write!(f, "Contract")
-            }
+            Call { to: _ } =>  write!(f, "Contract (CALL)"),
+            CallCode { to: _ } =>  write!(f, "Contract (CALLCODE)"),
+            DelegateCall { to: _ } =>  write!(f, "Contract (DELEGATECALL)"),
+            StaticCall { to: _ } =>  write!(f, "Contract (STATICCALL)"),
             Function { likely_selector } => write!(f, "Function {likely_selector}"),
             Log0 => write!(f, "Log created"),
-            Log1 { name } | Log2 { name } | Log3 { name } | Log4 { name } => {
-                write!(f, "Log created ({name})")
-            }
+            Log1 { name }=> write!(f, "Log1 created ({name})"),
+            Log2 { name }=> write!(f, "Log2 created ({name})"),
+            Log3 { name }=> write!(f, "Log3 created ({name})"),
+            Log4 { name }=> write!(f, "Log4 created ({name})"),
             Push4 {
                 stack_0: _,
                 stack_1: _,
@@ -163,9 +165,10 @@ pub fn process_trace() {
     let stdin = std::io::stdin();
     let reader = stdin.lock();
 
-    let mut transaction_counter = 1;
+    let mut transaction_counter = 0;
     let mut context: Vec<Context> = vec![Context::default()];
-    let mut pending_context: Option<Context> = None;
+    let mut pending_context = ContextUpdate::None;
+    let mut prev_transaction_concluded = false;
 
     reader
         .lines()
@@ -190,10 +193,25 @@ pub fn process_trace() {
         })
         .tuple_windows() // Clone the step to give access to the next step.
         .for_each(|(step, peek)| {
-            if let Some(c) = &pending_context {
-                context.push(c.clone());
-                pending_context = None;
+            if prev_transaction_concluded {
+
+                transaction_counter += 1;
+                context = vec![Context::default()];
+                println!("New tx, step.depth is {}", step.depth);
             }
+            match &pending_context {
+                ContextUpdate::None => {},
+                ContextUpdate::Add(pending) => {
+                    context.push(pending.clone());
+                    pending_context = ContextUpdate::None;
+                },
+                ContextUpdate::Remove => {context.pop().unwrap();},
+            }
+
+            if step.depth as usize != context.len() {
+                //println!("step {} context {}",step.depth ,context.len());
+            }
+
             // Peek at next EVM step to differentiate CALL-type to addresses with/without code.
             let mut processed = step.processed_step.unwrap();
             let context_added = peek.depth - step.depth == 1;
@@ -202,21 +220,7 @@ pub fn process_trace() {
                 processed = convert_codeless_call(processed);
             }
 
-            match context_update(&context, &processed) {
-                Ok(ContextUpdate::None) => {}
-                Ok(ContextUpdate::Add(new_context)) => {
-                    // While at the CALL-type opcode, save the context details (msg.sender etc.).
-                    pending_context = Some(new_context);
-                }
-                Ok(ContextUpdate::Remove) => {
-                    match context.pop().ok_or(FilterError::AbsentContext) {
-                        Ok(_) => todo!(),
-                        Err(_) => todo!(),
-                    }
-                }
-                Err(_) => todo!(),
-            };
-
+            // Do display here
             match context.last() {
                 Some(current_context) => {
                     let juncture = Juncture {
@@ -230,23 +234,32 @@ pub fn process_trace() {
                     //println!("{}", json!(juncture));
                 }
                 None => {
-                    // End of transaction
-                    let new_context = Context::default();
-                    let juncture = Juncture {
-                        action: &processed,
-                        current_context: &new_context,
-                        context_depth: step.depth as usize,
-                        transaction: transaction_counter,
-                    };
+                    todo!("error. Step depth {}", step.depth);
 
-                    transaction_counter += 1;
-                    pending_context = Some(Context::default());
-                    //println!("Transaction incremented {}", transaction_counter);
-
-                    println!("{juncture}");
-                    //println!("{}", json!(juncture));
                 }
             };
+
+
+            // Determine next-opcode context change here.
+            match get_pending_context_update(&context, &processed) {
+                Ok(ContextUpdate::None) => {
+                    pending_context = ContextUpdate::None;
+                }
+                Ok(ContextUpdate::Add(new_context)) => {
+                    // While at the CALL-type opcode, save the context details (msg.sender etc.).
+                    pending_context = ContextUpdate::Add(new_context);
+                }
+                Ok(ContextUpdate::Remove) => {
+                    if step.depth == 1 {
+                        pending_context = ContextUpdate::None;
+                        prev_transaction_concluded = true;
+                    } else {
+                        pending_context = ContextUpdate::Remove;
+                    }
+                }
+                Err(_) => todo!(),
+            };
+
         });
 }
 
@@ -414,7 +427,7 @@ enum ContextUpdate {
 /// If a opcode affects the call context, determine the new context it would create.
 ///
 /// It may ultimetely not be applied (e.g., CALL to EOA).
-fn context_update(context: &[Context], step: &ProcessedStep) -> Result<ContextUpdate, FilterError> {
+fn get_pending_context_update(context: &[Context], step: &ProcessedStep) -> Result<ContextUpdate, FilterError> {
     match step {
         ProcessedStep::Call { to } | ProcessedStep::StaticCall { to } => {
             if is_precompile(to) {
