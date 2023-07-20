@@ -37,7 +37,7 @@ pub(crate) struct Juncture<'a> {
 impl Display for Juncture<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use ProcessedStep::*;
-        for _ in 0..self.context_depth {
+        for _ in 0..(self.context_depth) {
             write!(f, "\t")?;
         }
         match self.action {
@@ -49,9 +49,17 @@ impl Display for Juncture<'_> {
                 "{} from {}",
                 self.action, self.current_context.message_sender
             ),
+            TxFinished(_) => write!(f, "{} (counted index = {})", self.action, self.transaction),
             _ => write!(f, "{}", self.action),
         }
     }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct Step {
+    pub trace: EvmStep,
+    pub processed: ProcessedStep,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -66,16 +74,6 @@ pub(crate) struct EvmStep {
     pub(crate) depth: u64,
     pub(crate) op_name: String,
     pub(crate) memory: Option<Vec<String>>,
-    pub(crate) processed_step: Option<ProcessedStep>,
-}
-
-impl EvmStep {
-    // Indicates the start of the transaction (revm).
-    fn start_transaction() -> Result<Self, FilterError> {
-        let json = r#"{"pc":0,"op":0,"gas":"0x0","gasCost":"0x0","memSize":0,"stack":[],"depth":0,"opName":"STOP"}"#;
-        let e: EvmStep = serde_json::from_str(json)?;
-        Ok(e)
-    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -120,11 +118,12 @@ pub(crate) enum ProcessedStep {
     Return,
     Revert,
     SelfDestruct,
-    Start,
+
     StaticCall {
         to: String,
     },
     Stop,
+    TxFinished(FinishMechanism),
     Uninteresting,
 }
 
@@ -132,16 +131,16 @@ impl Display for ProcessedStep {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use ProcessedStep::*;
         match self {
-            Call { to: _ } =>  write!(f, "Contract (CALL)"),
-            CallCode { to: _ } =>  write!(f, "Contract (CALLCODE)"),
-            DelegateCall { to: _ } =>  write!(f, "Contract (DELEGATECALL)"),
-            StaticCall { to: _ } =>  write!(f, "Contract (STATICCALL)"),
+            Call { to: _ } => write!(f, "Contract (CALL)"),
+            CallCode { to: _ } => write!(f, "Contract (CALLCODE)"),
+            DelegateCall { to: _ } => write!(f, "Contract (DELEGATECALL)"),
+            StaticCall { to: _ } => write!(f, "Contract (STATICCALL)"),
             Function { likely_selector } => write!(f, "Function {likely_selector}"),
             Log0 => write!(f, "Log created"),
-            Log1 { name }=> write!(f, "Log1 created ({name})"),
-            Log2 { name }=> write!(f, "Log2 created ({name})"),
-            Log3 { name }=> write!(f, "Log3 created ({name})"),
-            Log4 { name }=> write!(f, "Log4 created ({name})"),
+            Log1 { name } => write!(f, "Log1 created ({name})"),
+            Log2 { name } => write!(f, "Log2 created ({name})"),
+            Log3 { name } => write!(f, "Log3 created ({name})"),
+            Log4 { name } => write!(f, "Log4 created ({name})"),
             Push4 {
                 stack_0: _,
                 stack_1: _,
@@ -154,8 +153,8 @@ impl Display for ProcessedStep {
             Return => write!(f, "Returned"),
             Revert => write!(f, "Reverted"),
             SelfDestruct => write!(f, "Self destructed"),
-            Start => write!(f, "Start transaction"),
             Stop => write!(f, "Stopped"),
+            TxFinished(mechanism) => write!(f, "Transaction finished ({mechanism})"),
             Uninteresting => Ok(()),
         }
     }
@@ -168,7 +167,6 @@ pub fn process_trace() {
     let mut transaction_counter = 0;
     let mut context: Vec<Context> = vec![Context::default()];
     let mut pending_context = ContextUpdate::None;
-    let mut prev_transaction_concluded = false;
 
     reader
         .lines()
@@ -180,53 +178,59 @@ pub fn process_trace() {
             Ok(l) => Some(l),
             Err(_) => None, // Not an EvmStep (e.g., output)
         })
-        .filter_map(|mut step| {
+        .filter_map(|step| {
             // Add processed information to step.
             // Exclude uninteresting steps (ADD, ISZERO, ...)
-            match process_step(&step) {
-                Some(processed) => {
-                    step.processed_step = Some(processed);
-                    Some(step)
-                }
-                None => None,
-            }
+            process_step(&step).map(|processed| Step {
+                trace: step,
+                processed,
+            })
         })
         .tuple_windows() // Clone the step to give access to the next step.
-        .for_each(|(step, peek)| {
-            if prev_transaction_concluded {
-
-                transaction_counter += 1;
-                context = vec![Context::default()];
-                println!("New tx, step.depth is {}", step.depth);
+        .map(|(step, peek)| {
+            // If context doesn't increase, a call is to a non-code account.
+            match peek.trace.depth - step.trace.depth {
+                1 => (step, peek),
+                _ => (
+                    Step {
+                        trace: step.trace,
+                        processed: convert_codeless_call(step.processed),
+                    },
+                    peek,
+                ),
             }
+        })
+        .for_each(|(step, _peek)| {
+            // Apply pending context to the current step.
             match &pending_context {
-                ContextUpdate::None => {},
+                ContextUpdate::None => {}
                 ContextUpdate::Add(pending) => {
                     context.push(pending.clone());
                     pending_context = ContextUpdate::None;
-                },
-                ContextUpdate::Remove => {context.pop().unwrap();},
+                }
+                ContextUpdate::Remove => {
+                    context.pop().unwrap();
+                }
+                ContextUpdate::Reset => {
+                    context = vec![Context::default()];
+                    transaction_counter += 1;
+                    pending_context = ContextUpdate::None;
+                }
             }
 
-            if step.depth as usize != context.len() {
-                //println!("step {} context {}",step.depth ,context.len());
-            }
-
-            // Peek at next EVM step to differentiate CALL-type to addresses with/without code.
-            let mut processed = step.processed_step.unwrap();
-            let context_added = peek.depth - step.depth == 1;
-            if !context_added {
-                // Context depth did not increase. Called address must have no code.
-                processed = convert_codeless_call(processed);
-            }
+            // Determine next opcode context change here.
+            pending_context = match get_pending_context_update(&context, &step.processed) {
+                Ok(update) => update,
+                Err(_) => todo!(),
+            };
 
             // Do display here
             match context.last() {
                 Some(current_context) => {
                     let juncture = Juncture {
-                        action: &processed,
+                        action: &step.processed,
                         current_context,
-                        context_depth: step.depth as usize,
+                        context_depth: step.trace.depth as usize,
                         transaction: transaction_counter,
                     };
 
@@ -234,32 +238,9 @@ pub fn process_trace() {
                     //println!("{}", json!(juncture));
                 }
                 None => {
-                    todo!("error. Step depth {}", step.depth);
-
+                    todo!("error");
                 }
             };
-
-
-            // Determine next-opcode context change here.
-            match get_pending_context_update(&context, &processed) {
-                Ok(ContextUpdate::None) => {
-                    pending_context = ContextUpdate::None;
-                }
-                Ok(ContextUpdate::Add(new_context)) => {
-                    // While at the CALL-type opcode, save the context details (msg.sender etc.).
-                    pending_context = ContextUpdate::Add(new_context);
-                }
-                Ok(ContextUpdate::Remove) => {
-                    if step.depth == 1 {
-                        pending_context = ContextUpdate::None;
-                        prev_transaction_concluded = true;
-                    } else {
-                        pending_context = ContextUpdate::Remove;
-                    }
-                }
-                Err(_) => todo!(),
-            };
-
         });
 }
 
@@ -343,14 +324,24 @@ impl TryFrom<&EvmStep> for ProcessedStep {
             "LOG4" => Self::Log4 {
                 name: stack_nth(&value.stack, 2)?,
             },
-            "RETURN" => Self::Return,
-            "REVERT" => Self::Revert,
+            "RETURN" => {
+                match value.depth {
+                    1 => Self::TxFinished(FinishMechanism::Return), // All transactions end with STOP at call depth 1.
+                    _ => Self::Return,
+                }
+            }
+            "REVERT" => {
+                match value.depth {
+                    1 => Self::TxFinished(FinishMechanism::Revert), // All transactions end with STOP at call depth 1.
+                    _ => Self::Revert,
+                }
+            }
             "SELFDESTRUCT" => Self::SelfDestruct,
             "STOP" => {
-                if value == &EvmStep::start_transaction()? {
-                    Self::Start
-                } else {
-                    Self::Stop
+                match value.depth {
+                    0 => Self::Uninteresting, // Artefact unique to revm (used at start of transactions)
+                    1 => Self::TxFinished(FinishMechanism::Stop), // All transactions end with STOP at call depth 1.
+                    _ => Self::Stop,
                 }
             }
             _ => Self::Uninteresting,
@@ -419,15 +410,23 @@ fn stack_nth(stack: &[String], index: usize) -> Result<String, FilterError> {
 /// An opcode may cause a change to the context that will apply to the next
 /// EVM step.
 enum ContextUpdate {
+    /// Context does not need changing.
     None,
+    /// Context needs to be added (e.g., entering a contract call).
     Add(Context),
+    /// Current context needs to be removed (e.g., returning from a contract call).
     Remove,
+    /// A new context is needed for the next transaction.
+    Reset,
 }
 
 /// If a opcode affects the call context, determine the new context it would create.
 ///
 /// It may ultimetely not be applied (e.g., CALL to EOA).
-fn get_pending_context_update(context: &[Context], step: &ProcessedStep) -> Result<ContextUpdate, FilterError> {
+fn get_pending_context_update(
+    context: &[Context],
+    step: &ProcessedStep,
+) -> Result<ContextUpdate, FilterError> {
     match step {
         ProcessedStep::Call { to } | ProcessedStep::StaticCall { to } => {
             if is_precompile(to) {
@@ -466,6 +465,7 @@ fn get_pending_context_update(context: &[Context], step: &ProcessedStep) -> Resu
         | ProcessedStep::Revert
         | ProcessedStep::SelfDestruct
         | ProcessedStep::Stop => Ok(ContextUpdate::Remove),
+        ProcessedStep::TxFinished(_) => Ok(ContextUpdate::Reset),
         _ => Ok(ContextUpdate::None),
     }
 }
@@ -478,4 +478,23 @@ fn is_precompile<T: AsRef<str>>(address: T) -> bool {
         address.as_ref(),
         "0x1" | "0x2" | "0x3" | "0x4" | "0x5" | "0x6" | "0x7" | "0x8" | "0x9"
     )
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FinishMechanism {
+    Stop,
+    Return,
+    Revert,
+}
+
+impl Display for FinishMechanism {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let m = match self {
+            FinishMechanism::Stop => "STOP",
+            FinishMechanism::Return => "RETURN",
+            FinishMechanism::Revert => "REVERT",
+        };
+        write!(f, "{m}")
+    }
 }
