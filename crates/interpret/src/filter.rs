@@ -58,7 +58,7 @@ impl Display for Juncture<'_> {
             TxSummary {
                 output: _,
                 gas_used: _,
-            } => write!(f, "Transaction {} complete. {}",self.tx_count ,self.action),
+            } => write!(f, "Transaction {} complete. {}", self.tx_count, self.action),
             _ => write!(f, "{}", self.action),
         }
     }
@@ -223,11 +223,12 @@ pub fn process_trace() {
             // Exclude uninteresting steps (ADD, ISZERO, ...)
             process_step(&step).map(|processed| {
                 let current_count = transaction_counter;
-                match &processed {
-                    ProcessedStep::TxSummary { output, gas_used } => {
-                        transaction_counter += 1; // for next tx (if present)
-                    }
-                    _ => {}
+                if let ProcessedStep::TxSummary {
+                    output: _,
+                    gas_used: _,
+                } = &processed
+                {
+                    transaction_counter += 1; // for next tx (if present)
                 }
                 Step {
                     trace: step,
@@ -300,7 +301,7 @@ pub fn process_trace() {
                     //println!("{}", json!(juncture));
                 }
                 None => {
-                    //todo!("error");
+                    todo!("error");
                 }
             };
         });

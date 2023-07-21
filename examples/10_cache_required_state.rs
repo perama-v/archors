@@ -1,5 +1,8 @@
 use anyhow::Result;
-use archors_inventory::cache::{store_block_with_transactions, store_required_state, get_required_state_from_cache, get_block_from_cache};
+use archors_inventory::cache::{
+    get_block_from_cache, get_required_state_from_cache, store_block_with_transactions,
+    store_required_state,
+};
 use archors_tracer::trace::BlockExecutor;
 
 /// Create, cache and then use the RequiredBlockState data type.
