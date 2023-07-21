@@ -108,6 +108,20 @@ impl Step {
     fn update_final_line(self) -> Step {
         self
     }
+    /// Convert to juncture (to display)
+    fn as_juncture<'a>(&'a self, context: &'a [Context]) -> Juncture {
+        let current_context = context.last().unwrap();
+        let context_depth = match &self.trace {
+            Eip3155Line::Step(s) => Some(s.depth as usize),
+            Eip3155Line::Output(_) => None,
+        };
+        Juncture {
+            action: &self.processed,
+            current_context,
+            context_depth,
+            tx_count: self.tx_count,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -294,19 +308,10 @@ pub fn process_trace() {
         apply_pending_context(&mut context, &mut pending_context);
         pending_context = get_pending_context_update(&context, &parsed_line.processed).unwrap();
 
-        let current_context = context.last().unwrap();
-        let context_depth = match parsed_line.trace {
-            Eip3155Line::Step(s) => Some(s.depth as usize),
-            Eip3155Line::Output(_) => None,
-        };
-        let juncture = Juncture {
-            action: &parsed_line.processed,
-            current_context,
-            context_depth,
-            tx_count: parsed_line.tx_count,
-        };
-        println!("{juncture}");
-        //println!("{}", json!(juncture));
+        let juncture = parsed_line.as_juncture(&context);
+
+        //println!("{juncture}");
+        println!("{}", json!(juncture));
     }
 }
 
