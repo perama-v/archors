@@ -14,8 +14,17 @@ fn main() -> Result<()> {
     let executor = BlockExecutor::load(block, state)?;
 
     // Either trace the full block or a single transaction of interest.
-    executor.trace_transaction(204)?;
-    //executor.trace_block()?;
+    /*
+    - 2,
+    - 14: Failed swap
+    - 28: Failed contract execution
+    - 37: Failed contract execution
+    - 95: Coinbase using multiple CALL to send ether to EOAs.
+    - 196, 204,
+    - 205 simple transfer (final tx)
+    */
+    //executor.trace_transaction(28)?;
+    executor.trace_block()?;
 
     Ok(())
 }
