@@ -6,6 +6,9 @@
 //! Note that a line in a trace is pre-application of the opcode. E.g., the opcode will
 //! use the values in the stack on the same line.
 
+// Resources
+/// - EVMOne: https://github.com/ethereum/evmone/pull/325
+/// - Test case: https://github.com/Arachnid/EIPs/commit/28e73864f72d66b5dd31fdb5f7502f0327075131
 use std::{fmt::Display, io::BufRead};
 
 use itertools::Itertools;
@@ -27,19 +30,21 @@ pub enum FilterError {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Juncture<'a> {
-    /// Transaction number encountered, not transaction index in block.
-    pub transaction: usize,
     pub action: &'a ProcessedStep,
     pub current_context: &'a Context,
-    pub context_depth: usize,
+    pub context_depth: Option<usize>,
+    pub tx_count: usize,
 }
 
 impl Display for Juncture<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use ProcessedStep::*;
-        for _ in 0..(self.context_depth) {
-            write!(f, "\t")?;
+        if let Some(depth) = self.context_depth {
+            for _ in 0..depth {
+                write!(f, "\t")?;
+            }
         }
+
         match self.action {
             Call { to: _ } | CallCode { to: _ } | DelegateCall { to: _ } | StaticCall { to: _ } => {
                 write!(f, "{} {}", self.action, self.current_context)
@@ -49,7 +54,11 @@ impl Display for Juncture<'_> {
                 "{} from {}",
                 self.action, self.current_context.message_sender
             ),
-            TxFinished(_) => write!(f, "{} (counted index = {})", self.action, self.transaction),
+            TxFinished(_) => write!(f, "{}", self.action),
+            TxSummary {
+                output: _,
+                gas_used: _,
+            } => write!(f, "Transaction {} complete. {}",self.tx_count ,self.action),
             _ => write!(f, "{}", self.action),
         }
     }
@@ -57,9 +66,17 @@ impl Display for Juncture<'_> {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) enum Eip3155Line {
+    Step(EvmStep),
+    Output(EvmOutput),
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct Step {
-    pub trace: EvmStep,
+    pub trace: Eip3155Line,
     pub processed: ProcessedStep,
+    pub tx_count: usize,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -74,6 +91,13 @@ pub(crate) struct EvmStep {
     pub(crate) depth: u64,
     pub(crate) op_name: String,
     pub(crate) memory: Option<Vec<String>>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct EvmOutput {
+    pub(crate) output: String,
+    pub(crate) gas_used: String,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -123,7 +147,13 @@ pub(crate) enum ProcessedStep {
         to: String,
     },
     Stop,
+    /// Deduction of how a transaction ended.
     TxFinished(FinishMechanism),
+    /// EVM output containing specific post-transaction facts.
+    TxSummary {
+        output: String,
+        gas_used: String,
+    },
     Uninteresting,
 }
 
@@ -155,6 +185,10 @@ impl Display for ProcessedStep {
             SelfDestruct => write!(f, "Self destructed"),
             Stop => write!(f, "Stopped"),
             TxFinished(mechanism) => write!(f, "Transaction finished ({mechanism})"),
+            TxSummary { output, gas_used } => write!(
+                f,
+                "Transaction summary, gas used: {gas_used}, output: {output}"
+            ),
             Uninteresting => Ok(()),
         }
     }
@@ -175,32 +209,57 @@ pub fn process_trace() {
             Err(_) => None, // Bad stdin line
         })
         .filter_map(|line| match serde_json::from_str::<EvmStep>(&line) {
-            Ok(l) => Some(l),
-            Err(_) => None, // Not an EvmStep (e.g., output)
+            Ok(step) => Some(Eip3155Line::Step(step)),
+            Err(_) => {
+                // Not an EvmStep (e.g., output)
+                match serde_json::from_str::<EvmOutput>(&line) {
+                    Ok(output) => Some(Eip3155Line::Output(output)),
+                    Err(_) => None, // Not an EvmStep or Output
+                }
+            }
         })
         .filter_map(|step| {
             // Add processed information to step.
             // Exclude uninteresting steps (ADD, ISZERO, ...)
-            process_step(&step).map(|processed| Step {
-                trace: step,
-                processed,
+            process_step(&step).map(|processed| {
+                let current_count = transaction_counter;
+                match &processed {
+                    ProcessedStep::TxSummary { output, gas_used } => {
+                        transaction_counter += 1; // for next tx (if present)
+                    }
+                    _ => {}
+                }
+                Step {
+                    trace: step,
+                    processed,
+                    tx_count: current_count,
+                }
             })
         })
+        // TODO note: the tuple_windows() will skip the last line.
         .tuple_windows() // Clone the step to give access to the next step.
         .map(|(step, peek)| {
-            // If context doesn't increase, a call is to a non-code account.
-            match peek.trace.depth - step.trace.depth {
-                1 => (step, peek),
-                _ => (
-                    Step {
-                        trace: step.trace,
-                        processed: convert_codeless_call(step.processed),
-                    },
-                    peek,
-                ),
+            // Rmove th
+            // If processed is call-family
+            match (&step.trace, &peek.trace) {
+                (Eip3155Line::Step(step_trace), Eip3155Line::Step(peek_trace)) => {
+                    // If context doesn't increase, a call is to a non-code account.
+                    // todo!("also handle other OOG opcodes here");
+                    match peek_trace.depth - step_trace.depth {
+                        1 => step,
+                        _ => Step {
+                            trace: step.trace,
+                            processed: convert_codeless_call(step.processed),
+                            tx_count: step.tx_count,
+                        },
+                    }
+                }
+                (Eip3155Line::Step(_), Eip3155Line::Output(_)) => step,
+                (Eip3155Line::Output(_), Eip3155Line::Step(_)) => step,
+                (Eip3155Line::Output(_), Eip3155Line::Output(_)) => step,
             }
         })
-        .for_each(|(step, _peek)| {
+        .for_each(|step| {
             // Apply pending context to the current step.
             match &pending_context {
                 ContextUpdate::None => {}
@@ -213,7 +272,7 @@ pub fn process_trace() {
                 }
                 ContextUpdate::Reset => {
                     context = vec![Context::default()];
-                    transaction_counter += 1;
+                    // transaction_counter += 1; see earlier closure
                     pending_context = ContextUpdate::None;
                 }
             }
@@ -227,18 +286,21 @@ pub fn process_trace() {
             // Do display here
             match context.last() {
                 Some(current_context) => {
+                    let context_depth = match step.trace {
+                        Eip3155Line::Step(s) => Some(s.depth as usize),
+                        Eip3155Line::Output(_) => None,
+                    };
                     let juncture = Juncture {
                         action: &step.processed,
                         current_context,
-                        context_depth: step.trace.depth as usize,
-                        transaction: transaction_counter,
+                        context_depth,
+                        tx_count: step.tx_count,
                     };
-
                     println!("{juncture}");
                     //println!("{}", json!(juncture));
                 }
                 None => {
-                    todo!("error");
+                    //todo!("error");
                 }
             };
         });
@@ -336,7 +398,6 @@ impl TryFrom<&EvmStep> for ProcessedStep {
                     _ => Self::Revert,
                 }
             }
-            "SELFDESTRUCT" => Self::SelfDestruct,
             "STOP" => {
                 match value.depth {
                     0 => Self::Uninteresting, // Artefact unique to revm (used at start of transactions)
@@ -344,8 +405,19 @@ impl TryFrom<&EvmStep> for ProcessedStep {
                     _ => Self::Stop,
                 }
             }
+            "SELFDESTRUCT" => Self::SelfDestruct,
+
             _ => Self::Uninteresting,
         })
+    }
+}
+
+impl From<&EvmOutput> for ProcessedStep {
+    fn from(value: &EvmOutput) -> Self {
+        ProcessedStep::TxSummary {
+            output: value.output.clone(),
+            gas_used: value.gas_used.clone(),
+        }
     }
 }
 
@@ -389,12 +461,15 @@ impl Display for Context {
     }
 }
 
-/// An EVM step is replaced by a new representation if it is of interest.
-fn process_step(step: &EvmStep) -> Option<ProcessedStep> {
-    match ProcessedStep::try_from(step) {
-        Ok(ProcessedStep::Uninteresting) => None,
-        Ok(s) => Some(s),
-        Err(_) => None,
+/// If a line from the trace is of interest, a new representation is created.
+fn process_step(step: &Eip3155Line) -> Option<ProcessedStep> {
+    match step {
+        Eip3155Line::Step(evm_step) => match ProcessedStep::try_from(evm_step) {
+            Ok(ProcessedStep::Uninteresting) => None,
+            Ok(processed_step) => Some(processed_step),
+            Err(_) => None,
+        },
+        Eip3155Line::Output(evm_output) => Some(ProcessedStep::from(evm_output)),
     }
 }
 
