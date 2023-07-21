@@ -9,7 +9,7 @@
 // Resources
 /// - EVMOne: https://github.com/ethereum/evmone/pull/325
 /// - Test case: https://github.com/Arachnid/EIPs/commit/28e73864f72d66b5dd31fdb5f7502f0327075131
-use std::{fmt::Display, io::BufRead};
+use std::{cmp::Ordering, fmt::Display, io::BufRead};
 
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
@@ -78,6 +78,37 @@ pub(crate) struct Step {
     pub processed: ProcessedStep,
     pub tx_count: usize,
 }
+impl Step {
+    /// Some opcodes have different behaviour, which can
+    /// be understood by peeking at the next opcode.
+    ///
+    /// E.g. Call to account with no code (sends ether, no context increase).
+    fn detect_call_to_no_code(self, peek: &Step) -> Step {
+        let mut current = self;
+        let current_depth = match current.trace {
+            Eip3155Line::Step(ref s) => s.depth,
+            Eip3155Line::Output(_) => 0,
+        };
+        let peek_depth = match peek.trace {
+            Eip3155Line::Step(ref s) => s.depth,
+            Eip3155Line::Output(_) => 0,
+        };
+        match peek_depth.cmp(&current_depth) {
+            Ordering::Less => {}    // peek has less context
+            Ordering::Greater => {} // added context
+            Ordering::Equal => {
+                // same context
+                // If call type, this is a call to an account with no code.
+                current.processed = current.processed.clone().convert_to_codeless_call();
+            }
+        }
+        current
+    }
+    /// In the stream, the final line does not have a subsequent line to peek from.
+    fn update_final_line(self) -> Step {
+        self
+    }
+}
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -139,6 +170,7 @@ pub(crate) enum ProcessedStep {
     PayCall {
         to: String,
     },
+    Invalid,
     Return,
     Revert,
     SelfDestruct,
@@ -155,6 +187,18 @@ pub(crate) enum ProcessedStep {
         gas_used: String,
     },
     Uninteresting,
+}
+
+impl ProcessedStep {
+    fn convert_to_codeless_call(self) -> ProcessedStep {
+        match self {
+            ProcessedStep::Call { to } => ProcessedStep::PayCall { to },
+            ProcessedStep::CallCode { to } => ProcessedStep::PayCall { to },
+            ProcessedStep::DelegateCall { to } => ProcessedStep::PayCall { to },
+            ProcessedStep::StaticCall { to } => ProcessedStep::PayCall { to },
+            step => step, // return unchanged
+        }
+    }
 }
 
 impl Display for ProcessedStep {
@@ -180,6 +224,7 @@ impl Display for ProcessedStep {
                 "Ether paid to codeless account {to} (via a call-like opcode)"
             ),
             Precompile => write!(f, "Precompile used"),
+            Invalid => write!(f, "Invalid opcode"),
             Return => write!(f, "Returned"),
             Revert => write!(f, "Reverted"),
             SelfDestruct => write!(f, "Self destructed"),
@@ -199,10 +244,8 @@ pub fn process_trace() {
     let reader = stdin.lock();
 
     let mut transaction_counter = 0;
-    let mut context: Vec<Context> = vec![Context::default()];
-    let mut pending_context = ContextUpdate::None;
 
-    reader
+    let mut peekable_lines = reader
         .lines()
         .filter_map(|line| match line {
             Ok(l) => Some(l),
@@ -237,84 +280,52 @@ pub fn process_trace() {
                 }
             })
         })
-        // TODO note: the tuple_windows() will skip the last line.
-        .tuple_windows() // Clone the step to give access to the next step.
-        .map(|(step, peek)| {
-            // Rmove th
-            // If processed is call-family
-            match (&step.trace, &peek.trace) {
-                (Eip3155Line::Step(step_trace), Eip3155Line::Step(peek_trace)) => {
-                    // If context doesn't increase, a call is to a non-code account.
-                    // todo!("also handle other OOG opcodes here");
-                    match peek_trace.depth - step_trace.depth {
-                        1 => step,
-                        _ => Step {
-                            trace: step.trace,
-                            processed: convert_codeless_call(step.processed),
-                            tx_count: step.tx_count,
-                        },
-                    }
-                }
-                (Eip3155Line::Step(_), Eip3155Line::Output(_)) => step,
-                (Eip3155Line::Output(_), Eip3155Line::Step(_)) => step,
-                (Eip3155Line::Output(_), Eip3155Line::Output(_)) => step,
-            }
-        })
-        .for_each(|step| {
-            // Apply pending context to the current step.
-            match &pending_context {
-                ContextUpdate::None => {}
-                ContextUpdate::Add(pending) => {
-                    context.push(pending.clone());
-                    pending_context = ContextUpdate::None;
-                }
-                ContextUpdate::Remove => {
-                    context.pop().unwrap();
-                }
-                ContextUpdate::Reset => {
-                    context = vec![Context::default()];
-                    // transaction_counter += 1; see earlier closure
-                    pending_context = ContextUpdate::None;
-                }
-            }
+        .peekable();
 
-            // Determine next opcode context change here.
-            pending_context = match get_pending_context_update(&context, &step.processed) {
-                Ok(update) => update,
-                Err(_) => todo!(),
-            };
+    let mut context: Vec<Context> = vec![Context::default()];
+    let mut pending_context = ContextUpdate::None;
 
-            // Do display here
-            match context.last() {
-                Some(current_context) => {
-                    let context_depth = match step.trace {
-                        Eip3155Line::Step(s) => Some(s.depth as usize),
-                        Eip3155Line::Output(_) => None,
-                    };
-                    let juncture = Juncture {
-                        action: &step.processed,
-                        current_context,
-                        context_depth,
-                        tx_count: step.tx_count,
-                    };
-                    println!("{juncture}");
-                    //println!("{}", json!(juncture));
-                }
-                None => {
-                    todo!("error");
-                }
-            };
-        });
+    while let Some(line) = peekable_lines.next() {
+        let parsed_line = match peekable_lines.peek() {
+            Some(peek) => line.detect_call_to_no_code(peek),
+            None => line.update_final_line(),
+        };
+
+        apply_pending_context(&mut context, &mut pending_context);
+        pending_context = get_pending_context_update(&context, &parsed_line.processed).unwrap();
+
+        let current_context = context.last().unwrap();
+        let context_depth = match parsed_line.trace {
+            Eip3155Line::Step(s) => Some(s.depth as usize),
+            Eip3155Line::Output(_) => None,
+        };
+        let juncture = Juncture {
+            action: &parsed_line.processed,
+            current_context,
+            context_depth,
+            tx_count: parsed_line.tx_count,
+        };
+        println!("{juncture}");
+        //println!("{}", json!(juncture));
+    }
 }
 
-fn convert_codeless_call(processed: ProcessedStep) -> ProcessedStep {
-    match processed {
-        ProcessedStep::Call { to } => ProcessedStep::PayCall { to },
-        ProcessedStep::CallCode { to } => ProcessedStep::PayCall { to },
-        ProcessedStep::DelegateCall { to } => ProcessedStep::PayCall { to },
-        ProcessedStep::StaticCall { to } => ProcessedStep::PayCall { to },
-        step => step, // return unchanged
+/// Apply pending context to the current step.
+fn apply_pending_context(context: &mut Vec<Context>, pending_context: &mut ContextUpdate) {
+    match &pending_context {
+        ContextUpdate::None => {}
+        ContextUpdate::Add(pending) => {
+            context.push(pending.clone());
+        }
+        ContextUpdate::Remove => {
+            context.pop().unwrap();
+        }
+        ContextUpdate::Reset => {
+            context.clear();
+            context.push(Context::default());
+        }
     }
+    *pending_context = ContextUpdate::None;
 }
 
 impl TryFrom<&EvmStep> for ProcessedStep {
@@ -387,22 +398,22 @@ impl TryFrom<&EvmStep> for ProcessedStep {
             "LOG4" => Self::Log4 {
                 name: stack_nth(&value.stack, 2)?,
             },
-            "RETURN" => {
-                match value.depth {
-                    1 => Self::TxFinished(FinishMechanism::Return), // All transactions end with STOP at call depth 1.
-                    _ => Self::Return,
-                }
-            }
-            "REVERT" => {
-                match value.depth {
-                    1 => Self::TxFinished(FinishMechanism::Revert), // All transactions end with STOP at call depth 1.
-                    _ => Self::Revert,
-                }
-            }
+            "INVALID" => match value.depth {
+                1 => Self::TxFinished(FinishMechanism::Invalid),
+                _ => Self::Return,
+            },
+            "RETURN" => match value.depth {
+                1 => Self::TxFinished(FinishMechanism::Return),
+                _ => Self::Return,
+            },
+            "REVERT" => match value.depth {
+                1 => Self::TxFinished(FinishMechanism::Revert),
+                _ => Self::Revert,
+            },
             "STOP" => {
                 match value.depth {
                     0 => Self::Uninteresting, // Artefact unique to revm (used at start of transactions)
-                    1 => Self::TxFinished(FinishMechanism::Stop), // All transactions end with STOP at call depth 1.
+                    1 => Self::TxFinished(FinishMechanism::Stop),
                     _ => Self::Stop,
                 }
             }
@@ -537,7 +548,8 @@ fn get_pending_context_update(
                 storage_address: previous.storage_address.clone(),
             }))
         }
-        ProcessedStep::Return
+        ProcessedStep::Invalid
+        | ProcessedStep::Return
         | ProcessedStep::Revert
         | ProcessedStep::SelfDestruct
         | ProcessedStep::Stop => Ok(ContextUpdate::Remove),
@@ -559,6 +571,7 @@ fn is_precompile<T: AsRef<str>>(address: T) -> bool {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum FinishMechanism {
+    Invalid,
     Stop,
     Return,
     Revert,
@@ -567,6 +580,7 @@ pub enum FinishMechanism {
 impl Display for FinishMechanism {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let m = match self {
+            FinishMechanism::Invalid => "INVALID",
             FinishMechanism::Stop => "STOP",
             FinishMechanism::Return => "RETURN",
             FinishMechanism::Revert => "REVERT",
