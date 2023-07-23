@@ -310,8 +310,8 @@ pub fn process_trace() {
 
         let juncture = parsed_line.as_juncture(&context);
 
-        //println!("{juncture}");
-        println!("{}", json!(juncture));
+        println!("{juncture}");
+        //println!("{}", json!(juncture));
     }
 }
 

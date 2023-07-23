@@ -15,6 +15,7 @@ fn main() -> Result<()> {
 
     // Either trace the full block or a single transaction of interest.
     /*
+    Notable transactions for block: 17190873
     - 2,
     - 14: Failed swap
     - 28: Failed contract execution
@@ -23,8 +24,8 @@ fn main() -> Result<()> {
     - 196, 204,
     - 205 simple transfer (final tx)
     */
-    //executor.trace_transaction(28)?;
-    executor.trace_block()?;
+    executor.trace_transaction(95)?;
+    //executor.trace_block()?;
 
     Ok(())
 }
