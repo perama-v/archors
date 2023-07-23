@@ -8,6 +8,34 @@ The data specified here is both necesessary and sufficient for tracing an Ethere
 - Network spec: [./spec/required_block_state_subprotocol.md](./spec/required_block_state_subprotocol.md)
 - Library example: [./examples/10_cache_required_state.rs](./examples/10_cache_required_state.rs)
 
+## Table of Contents
+
+- [archors](#archors)
+  - [Table of Contents](#table-of-contents)
+  - [Why](#why)
+  - [Research questions](#research-questions)
+  - [Status](#status)
+  - [Modes](#modes)
+  - [Use case](#use-case)
+  - [Requirements](#requirements)
+  - [State proof viz](#state-proof-viz)
+    - [State tree value structure](#state-tree-value-structure)
+    - [Combining all accessed state](#combining-all-accessed-state)
+  - [State and proof data properties](#state-and-proof-data-properties)
+    - [Deduplication on the disk of a peer](#deduplication-on-the-disk-of-a-peer)
+    - [Lower state burden in history](#lower-state-burden-in-history)
+    - [Node disk size](#node-disk-size)
+    - [Verkle transition](#verkle-transition)
+  - [Trace data](#trace-data)
+  - [Interpretation of traces](#interpretation-of-traces)
+  - [BLOCKHASH opcode](#blockhash-opcode)
+    - [BLOCKHASH mapping construction](#blockhash-mapping-construction)
+    - [BLOCKHASH mapping use](#blockhash-mapping-use)
+  - [Data expansion](#data-expansion)
+  - [Future considerations - Beacon root](#future-considerations---beacon-root)
+  - [Future considerations - BLOBHASH](#future-considerations---blobhash)
+
+
 ## Why
 
 To send a single historical block (as an historical state proof) to a peer and have
@@ -59,6 +87,7 @@ node must provide both:
 |8|verify|verify merkle proof for block|
 |9|tracer|locally produce `debug_traceTransaction` / `debug_traceBlock` using proof data|
 |10|inventory|obtain required state in one pass|
+|11|interpret|pure function to make traces meaningful|
 
 ## Use case
 
@@ -419,6 +448,42 @@ program counters 2080, 8672, 17898. One could create a parser that:
 }
 ```
 
+## Interpretation of traces
+
+A transaction trace contains some information that is not able to be converted into
+a meaningful representation without some external data. For example, the name of an
+emitted event, the name of a function call or the name of a company that has deployed
+a contract.
+
+However, there are many things that can be interpreted. The `archors-interpret` crate
+provides a pure function that does this. The transaction trace can be piped in, and
+the human readable result piped out.
+
+A large part of this is just filtering out meaningless opcodes like ADD and MUL. Then
+when interesting opcodes are used, reading values from the stack at that time.
+
+For example here is an early prototype. What do you think this transaction is doing?
+```
+Function 0x1a1da075
+Function 0x1a1da075
+Function 0x1a1da075
+Ether paid to codeless account 0xfb48076ec5726fe0865e7c91ef0e4077a5040c7a (via a call-like opcode) from tx.from
+Ether paid to codeless account 0x2d9258a8eae7753b1990846de39b740bc04f25a1 (via a call-like opcode) from tx.from
+Ether paid to codeless account 0xa5730f3b442024d66c2ca7f6cc37e696edba9663 (via a call-like opcode) from tx.from
+...
+(more similar ommitted)
+...
+Ether paid to codeless account 0xa158b6bed1c4bc657568b2e5136328a3638a71dd (via a call-like opcode) from tx.from
+Ether paid to codeless account 0x30a4639850b3ddeaaca4f06280aa751682f11382 (via a call-like opcode) from tx.from
+Ether paid to codeless account 0x68388d48b5baf99755ea9c685f15b0528edf90b6 (via a call-like opcode) from tx.from
+Transaction finished (STOP)
+```
+Its sending ether efficiently to 22 different addresses. Rather than sending a transaction for
+each destination. This way of sending ether doesn't actually emit events, and so tracing
+the transaction like this is the only way to know what is happening.
+
+Perhaps this representation can then be piped to a function that has a dictionary of common
+event/function 4-byte signatures and contract names.
 
 ## BLOCKHASH opcode
 
@@ -589,7 +654,7 @@ See that the EVM now has the correct hash `0x5734...7939` at the top of the stac
 }
 ```
 
-### Data expansion
+## Data expansion
 
 Local tracing has better trust assumptions, but is also more efficient compared to receiving a trace from a third-party.
 
@@ -604,7 +669,7 @@ The trace generated is:
 - Memory disabled: 270MB (100x bandwidth vs local)
 - Memory enabled: 35GB (10_000x bandwidth vs local)
 
-### Future considerations - Beacon root
+## Future considerations - Beacon root
 
 Like BLOCKHASH, `EIP-4788: Beacon block root in the EVM` is an opcode that allows
 the EVM to read state that is presumed available to the executor. The opcode will
@@ -614,7 +679,7 @@ If this EIP is included, this data should be included alongside BLOCKHASH data. 
 trace the block, search for the opcode and add beacon roots to the bundle that is passed
 to a peer. They can verify the canonicality of those roots prior to EVM execution.
 
-### Future considerations - BLOBHASH
+## Future considerations - BLOBHASH
 
 The BLOBHASH opcode is introduced by `EIP-4844: Shard blob transactions` and allows
 the EVM to read state that is already present within the block body. Each block may contain
