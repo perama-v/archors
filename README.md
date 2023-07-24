@@ -467,15 +467,15 @@ For example here is an early prototype. What do you think this transaction is do
 Function 0x1a1da075
 Function 0x1a1da075
 Function 0x1a1da075
-Ether paid to codeless account 0xfb48076ec5726fe0865e7c91ef0e4077a5040c7a (via a call-like opcode) from tx.from
-Ether paid to codeless account 0x2d9258a8eae7753b1990846de39b740bc04f25a1 (via a call-like opcode) from tx.from
-Ether paid to codeless account 0xa5730f3b442024d66c2ca7f6cc37e696edba9663 (via a call-like opcode) from tx.from
+0.003 ether paid to 0xfb48076ec5726fe0865e7c91ef0e4077a5040c7a (CALL to codeless account) from tx.from
+0.006 ether paid to 0x2d9258a8eae7753b1990846de39b740bc04f25a1 (CALL to codeless account) from tx.from
+0.013 ether paid to 0xa5730f3b442024d66c2ca7f6cc37e696edba9663 (CALL to codeless account) from tx.from
 ...
 (more similar ommitted)
 ...
-Ether paid to codeless account 0xa158b6bed1c4bc657568b2e5136328a3638a71dd (via a call-like opcode) from tx.from
-Ether paid to codeless account 0x30a4639850b3ddeaaca4f06280aa751682f11382 (via a call-like opcode) from tx.from
-Ether paid to codeless account 0x68388d48b5baf99755ea9c685f15b0528edf90b6 (via a call-like opcode) from tx.from
+0.83 ether paid to 0xa158b6bed1c4bc657568b2e5136328a3638a71dd (CALL to codeless account) from tx.from
+1.2 ether paid to 0x30a4639850b3ddeaaca4f06280aa751682f11382 (CALL to codeless account) from tx.from
+1.5 ether paid to 0x68388d48b5baf99755ea9c685f15b0528edf90b6 (CALL to codeless account) from tx.from
 Transaction finished (STOP)
 ```
 It's sending ether efficiently to 22 different addresses. Rather than sending a transaction for

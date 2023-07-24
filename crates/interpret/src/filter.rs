@@ -9,9 +9,9 @@
 // Resources
 /// - EVMOne: https://github.com/ethereum/evmone/pull/325
 /// - Test case: https://github.com/Arachnid/EIPs/commit/28e73864f72d66b5dd31fdb5f7502f0327075131
-use std::{cmp::Ordering, fmt::Display, io::BufRead};
+use std::{cmp::Ordering, fmt::Display, io::BufRead, ops::Mul, str::FromStr};
 
-use itertools::Itertools;
+use alloy_primitives::U256;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use thiserror::Error;
@@ -24,6 +24,8 @@ pub enum FilterError {
     AbsentContext,
     #[error("serde_json error {0}")]
     SerdeJson(#[from] serde_json::Error),
+    #[error("Unable to get next char from string")]
+    EndOfString,
 }
 
 /// A noteworthy occurrence whose summary might be meaningful.
@@ -46,10 +48,17 @@ impl Display for Juncture<'_> {
         }
 
         match self.action {
-            Call { to: _ } | CallCode { to: _ } | DelegateCall { to: _ } | StaticCall { to: _ } => {
+            Call { to: _, value: _ }
+            | CallCode { to: _, value: _ }
+            | DelegateCall { to: _, value: _ }
+            | StaticCall { to: _ } => {
                 write!(f, "{} {}", self.action, self.current_context)
             }
-            PayCall { to: _ } => write!(
+            PayCall {
+                to: _,
+                value: _,
+                opcode: _,
+            } => write!(
                 f,
                 "{} from {}",
                 self.action, self.current_context.message_sender
@@ -150,12 +159,15 @@ pub(crate) struct EvmOutput {
 pub(crate) enum ProcessedStep {
     Call {
         to: String,
+        value: String,
     },
     CallCode {
         to: String,
+        value: String,
     },
     DelegateCall {
         to: String,
+        value: String,
     },
     /// Function call identified by use of a selector/JUMPI combination.
     Function {
@@ -183,6 +195,8 @@ pub(crate) enum ProcessedStep {
     /// A call variant made to an account with no code (just pays ether to it).
     PayCall {
         to: String,
+        value: Ether,
+        opcode: String,
     },
     Invalid,
     Return,
@@ -209,9 +223,21 @@ impl ProcessedStep {
     /// Note STATICCALL does not have this behaviour.
     fn convert_to_codeless_call(self) -> ProcessedStep {
         match self {
-            ProcessedStep::Call { to } => ProcessedStep::PayCall { to },
-            ProcessedStep::CallCode { to } => ProcessedStep::PayCall { to },
-            ProcessedStep::DelegateCall { to } => ProcessedStep::PayCall { to },
+            ProcessedStep::Call { to, value } => ProcessedStep::PayCall {
+                to,
+                value: Ether(value),
+                opcode: "CALL".to_string(),
+            },
+            ProcessedStep::CallCode { to, value } => ProcessedStep::PayCall {
+                to,
+                value: Ether(value),
+                opcode: "CALLCODE".to_string(),
+            },
+            ProcessedStep::DelegateCall { to, value } => ProcessedStep::PayCall {
+                to,
+                value: Ether(value),
+                opcode: "DELEGATECALL".to_string(),
+            },
             step => step, // return unchanged
         }
     }
@@ -221,9 +247,9 @@ impl Display for ProcessedStep {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use ProcessedStep::*;
         match self {
-            Call { to: _ } => write!(f, "Contract (CALL)"),
-            CallCode { to: _ } => write!(f, "Contract (CALLCODE)"),
-            DelegateCall { to: _ } => write!(f, "Contract (DELEGATECALL)"),
+            Call { to: _, value: _ } => write!(f, "Contract (CALL)"),
+            CallCode { to: _, value: _ } => write!(f, "Contract (CALLCODE)"),
+            DelegateCall { to: _, value: _ } => write!(f, "Contract (DELEGATECALL)"),
             StaticCall { to: _ } => write!(f, "Contract (STATICCALL)"),
             Function { likely_selector } => write!(f, "Function {likely_selector}"),
             Log0 => write!(f, "Log created"),
@@ -235,9 +261,9 @@ impl Display for ProcessedStep {
                 stack_0: _,
                 stack_1: _,
             } => Ok(()),
-            PayCall { to } => write!(
+            PayCall { to, value, opcode } => write!(
                 f,
-                "Ether paid to codeless account {to} (via a call-like opcode)"
+                "{value} ether paid to {to} ({opcode} to codeless account)"
             ),
             Precompile => write!(f, "Precompile used"),
             Invalid => write!(f, "Invalid opcode"),
@@ -342,23 +368,26 @@ impl TryFrom<&EvmStep> for ProcessedStep {
         Ok(match op_name {
             "CALL" => {
                 let to = stack_nth(&value.stack, 1)?;
+                let value = stack_nth(&value.stack, 2)?;
                 match is_precompile(&to) {
                     true => Self::Precompile,
-                    false => Self::Call { to },
+                    false => Self::Call { to, value },
                 }
             }
             "CALLCODE" => {
                 let to = stack_nth(&value.stack, 1)?;
+                let value = stack_nth(&value.stack, 2)?;
                 match is_precompile(&to) {
                     true => Self::Precompile,
-                    false => Self::CallCode { to },
+                    false => Self::CallCode { to, value },
                 }
             }
             "DELEGATECALL" => {
                 let to = stack_nth(&value.stack, 1)?;
+                let value = stack_nth(&value.stack, 2)?;
                 match is_precompile(&to) {
                     true => Self::Precompile,
-                    false => Self::DelegateCall { to },
+                    false => Self::DelegateCall { to, value },
                 }
             }
             "STATICCALL" => {
@@ -522,7 +551,7 @@ fn get_pending_context_update(
     step: &ProcessedStep,
 ) -> Result<ContextUpdate, FilterError> {
     match step {
-        ProcessedStep::Call { to } | ProcessedStep::StaticCall { to } => {
+        ProcessedStep::Call { to, value: _ } | ProcessedStep::StaticCall { to } => {
             if is_precompile(to) {
                 return Ok(ContextUpdate::None);
             }
@@ -533,7 +562,7 @@ fn get_pending_context_update(
                 storage_address: to.clone(),
             }))
         }
-        ProcessedStep::CallCode { to } => {
+        ProcessedStep::CallCode { to, value: _ } => {
             if is_precompile(to) {
                 return Ok(ContextUpdate::None);
             }
@@ -544,7 +573,7 @@ fn get_pending_context_update(
                 storage_address: previous.storage_address.clone(),
             }))
         }
-        ProcessedStep::DelegateCall { to } => {
+        ProcessedStep::DelegateCall { to, value: _ } => {
             if is_precompile(to) {
                 return Ok(ContextUpdate::None);
             }
@@ -593,5 +622,92 @@ impl Display for FinishMechanism {
             FinishMechanism::Revert => "REVERT",
         };
         write!(f, "{m}")
+    }
+}
+
+/// Quantity in wei
+///
+/// As hex-value like 0x1 (1 wei)
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Ether(String);
+
+impl Display for Ether {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            to_ether_pretty(&self.0).map_err(|_| std::fmt::Error)?
+        )
+    }
+}
+
+/// Human relatable approximate amount.
+///
+/// E.g., ~1.2 ether, ~0.0020 ether (no rounding)
+///
+/// Input is hex-string (0x-prefix) in wei.
+fn to_ether_pretty(hex_wei: &str) -> Result<String, FilterError> {
+    let val = U256::from_str(hex_wei).unwrap();
+    let num = val.to_string();
+    let mut chars = num.chars();
+    let decimals = val.approx_log10() as u64;
+    let ether = match decimals {
+        0_u64..=14_u64 => "<0.001".to_string(),
+        15 => format!("0.00{}", next_char(&mut chars)?),
+        16 => format!("0.0{}{}", next_char(&mut chars)?, next_char(&mut chars)?),
+        17 => format!("0.{}{}", next_char(&mut chars)?, next_char(&mut chars)?),
+        18 => format!("{}.{}", next_char(&mut chars)?, next_char(&mut chars)?),
+        19 => format!(
+            "{}{}.{}",
+            next_char(&mut chars)?,
+            next_char(&mut chars)?,
+            next_char(&mut chars)?
+        ),
+        20 => format!(
+            "{}{}{}.{}",
+            next_char(&mut chars)?,
+            next_char(&mut chars)?,
+            next_char(&mut chars)?,
+            next_char(&mut chars)?
+        ),
+        x @ 21_u64..=u64::MAX => format!("{val:.*}", x as usize),
+    };
+    Ok(ether)
+}
+
+/// Gets next char from a string.
+fn next_char(chars: &mut std::str::Chars<'_>) -> Result<char, FilterError> {
+    chars.next().ok_or(FilterError::EndOfString)
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_to_approx_ether() {
+        // 12648828125000 wei (0.000012)
+        assert_eq!(to_ether_pretty("0xb8108e83f48").unwrap(), "<0.001");
+        // 202381250000000 wei (0.00020)
+        assert_eq!(to_ether_pretty("0xb8108e83f480").unwrap(), "<0.001");
+        // 3238100000000000 wei (0.0032)
+        assert_eq!(to_ether_pretty("0xb8108e83f4800").unwrap(), "0.003");
+        // 6267810000000000 wei
+        assert_eq!(to_ether_pretty("0x16448a3c91d400").unwrap(), "0.006");
+        // 13234510000000000 wei
+        assert_eq!(to_ether_pretty("0x2f04b77b538c00").unwrap(), "0.013");
+        // 657311630000000000 wei
+        assert_eq!(to_ether_pretty("0x91f3d71e4e20c00").unwrap(), "0.65");
+        // 839991880000000000 wei
+        assert_eq!(to_ether_pretty("0xba8402a159cd000").unwrap(), "0.83");
+        // 1597427080000000000 wei
+        assert_eq!(to_ether_pretty("0x162b337739fd5000").unwrap(), "1.5");
+        // 1597427080000000000 wei
+        assert_eq!(to_ether_pretty("0x162b337739fd5000").unwrap(), "1.5");
+        // 25558833280000000000 wei
+        assert_eq!(to_ether_pretty("0x162b337739fd50000").unwrap(), "25.5");
+        // 408941332480000000000 wei
+        assert_eq!(to_ether_pretty("0x162b337739fd500000").unwrap(), "408.9");
     }
 }
