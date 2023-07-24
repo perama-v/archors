@@ -204,12 +204,14 @@ pub(crate) enum ProcessedStep {
 }
 
 impl ProcessedStep {
+    /// Converts a call-type opcode that just sends ether when the target has no code.
+    ///
+    /// Note STATICCALL does not have this behaviour.
     fn convert_to_codeless_call(self) -> ProcessedStep {
         match self {
             ProcessedStep::Call { to } => ProcessedStep::PayCall { to },
             ProcessedStep::CallCode { to } => ProcessedStep::PayCall { to },
             ProcessedStep::DelegateCall { to } => ProcessedStep::PayCall { to },
-            ProcessedStep::StaticCall { to } => ProcessedStep::PayCall { to },
             step => step, // return unchanged
         }
     }

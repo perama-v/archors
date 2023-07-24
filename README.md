@@ -478,7 +478,7 @@ Ether paid to codeless account 0x30a4639850b3ddeaaca4f06280aa751682f11382 (via a
 Ether paid to codeless account 0x68388d48b5baf99755ea9c685f15b0528edf90b6 (via a call-like opcode) from tx.from
 Transaction finished (STOP)
 ```
-Its sending ether efficiently to 22 different addresses. Rather than sending a transaction for
+It's sending ether efficiently to 22 different addresses. Rather than sending a transaction for
 each destination. This way of sending ether doesn't actually emit events, and so tracing
 the transaction like this is the only way to know what is happening.
 
