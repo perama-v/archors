@@ -21,10 +21,11 @@ fn main() -> Result<()> {
     - 28: Failed contract execution
     - 37: Failed contract execution
     - 95: Coinbase using multiple CALL to send ether to EOAs.
+    - 185: CREATEs 5 contracts
     - 196, 204,
     - 205 simple transfer (final tx)
     */
-    executor.trace_transaction(95)?;
+    executor.trace_transaction(185)?;
     //executor.trace_block()?;
 
     Ok(())

@@ -73,6 +73,7 @@ pub fn process_trace() {
 
     let mut context: Vec<Context> = vec![Context::default()];
     let mut pending_context = ContextUpdate::None;
+    let mut create_counter: usize = 0;
 
     while let Some(line) = peekable_lines.next() {
         let parsed_line = match peekable_lines.peek() {
@@ -81,7 +82,9 @@ pub fn process_trace() {
         };
 
         apply_pending_context(&mut context, &mut pending_context);
-        pending_context = get_pending_context_update(&context, &parsed_line.processed).unwrap();
+        pending_context =
+            get_pending_context_update(&context, &parsed_line.processed, &mut create_counter)
+                .unwrap();
 
         let juncture = parsed_line.as_juncture(&context);
         juncture.print_pretty();
@@ -99,7 +102,6 @@ fn process_step(step: &Eip3155Line) -> Option<ProcessedStep> {
         Eip3155Line::Output(evm_output) => Some(ProcessedStep::from(evm_output)),
     }
 }
-
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]

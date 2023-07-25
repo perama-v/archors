@@ -20,11 +20,23 @@ pub enum ContextError {
 #[serde(rename_all = "camelCase")]
 pub struct Context {
     /// Address where the code being executed resides
-    pub code_address: String,
+    pub code_address: Address,
     /// Address message.sender resolves at this time.
-    pub message_sender: String,
+    pub message_sender: Address,
     /// Address that storage modifications affect.
-    pub storage_address: String,
+    pub storage_address: Address,
+}
+
+/// A contract may
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Address {
+    /// Either existing or deployed via tx.to being nil (not using CREATE/CREATE2)
+    Standard(String),
+    /// New contract via CREATE/CREATE2, address not yet visible on the stack.
+    ///
+    /// The first created contract has index 0, increments thereafter.
+    CreatedPending { index: usize },
 }
 
 /// An opcode may cause a change to the context that will apply to the next
@@ -46,6 +58,7 @@ pub enum ContextUpdate {
 pub fn get_pending_context_update(
     context: &[Context],
     step: &ProcessedStep,
+    create_counter: &mut usize,
 ) -> Result<ContextUpdate, ContextError> {
     match step {
         ProcessedStep::Call { to, value: _ } | ProcessedStep::StaticCall { to } => {
@@ -54,9 +67,9 @@ pub fn get_pending_context_update(
             }
             let previous = context.last().ok_or(ContextError::AbsentContext)?;
             Ok(ContextUpdate::Add(Context {
-                code_address: to.clone(),
+                code_address: Address::Standard(to.clone()),
                 message_sender: previous.message_sender.clone(),
-                storage_address: to.clone(),
+                storage_address: Address::Standard(to.clone()),
             }))
         }
         ProcessedStep::CallCode { to, value: _ } => {
@@ -65,7 +78,7 @@ pub fn get_pending_context_update(
             }
             let previous = context.last().ok_or(ContextError::AbsentContext)?;
             Ok(ContextUpdate::Add(Context {
-                code_address: to.clone(),
+                code_address: Address::Standard(to.clone()),
                 message_sender: previous.code_address.clone(), // important
                 storage_address: previous.storage_address.clone(),
             }))
@@ -76,10 +89,25 @@ pub fn get_pending_context_update(
             }
             let previous = context.last().ok_or(ContextError::AbsentContext)?;
             Ok(ContextUpdate::Add(Context {
-                code_address: to.clone(),
+                code_address: Address::Standard(to.clone()),
                 message_sender: previous.message_sender.clone(), // important
                 storage_address: previous.storage_address.clone(),
             }))
+        }
+        ProcessedStep::Create | ProcessedStep::Create2 => {
+            let previous = context.last().ok_or(ContextError::AbsentContext)?;
+            let update = ContextUpdate::Add(Context {
+                code_address: Address::CreatedPending {
+                    index: *create_counter,
+                },
+                message_sender: previous.message_sender.clone(),
+                storage_address: Address::CreatedPending {
+                    index: *create_counter,
+                },
+            });
+            // The next contract created will have a different index.
+            *create_counter += 1;
+            Ok(update)
         }
         ProcessedStep::Invalid
         | ProcessedStep::Return
@@ -112,9 +140,9 @@ pub fn apply_pending_context(context: &mut Vec<Context>, pending_context: &mut C
 impl Default for Context {
     fn default() -> Self {
         Self {
-            code_address: "tx.to".to_string(),
-            message_sender: "tx.from".to_string(),
-            storage_address: "tx.to".to_string(),
+            code_address: Address::Standard("tx.to".to_string()),
+            message_sender: Address::Standard("tx.from".to_string()),
+            storage_address: Address::Standard("tx.to".to_string()),
         }
     }
 }
@@ -133,6 +161,15 @@ impl Display for Context {
                 "using code at {}, storage at {}, message.sender is {}",
                 self.code_address, self.storage_address, self.message_sender
             )
+        }
+    }
+}
+
+impl Display for Address {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Address::Standard(address) => write!(f, "{address}"),
+            Address::CreatedPending { index } => write!(f, "created contract (index {index})"),
         }
     }
 }

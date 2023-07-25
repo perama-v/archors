@@ -24,6 +24,7 @@ pub enum ProcessedError {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ProcessedStep {
+    // Address {}, // Could use to give extra context.
     Call {
         to: String,
         value: String,
@@ -32,6 +33,8 @@ pub enum ProcessedStep {
         to: String,
         value: String,
     },
+    Create,
+    Create2,
     DelegateCall {
         to: String,
         value: String,
@@ -69,7 +72,6 @@ pub enum ProcessedStep {
     Return,
     Revert,
     SelfDestruct,
-
     StaticCall {
         to: String,
     },
@@ -105,6 +107,8 @@ impl TryFrom<&EvmStep> for ProcessedStep {
                     false => Self::CallCode { to, value },
                 }
             }
+            "CREATE" => Self::Create,
+            "CREATE2" => Self::Create2,
             "DELEGATECALL" => {
                 let to = stack_nth(&value.stack, 1)?;
                 let value = stack_nth(&value.stack, 2)?;
@@ -215,6 +219,8 @@ impl Display for ProcessedStep {
         match self {
             Call { to: _, value: _ } => write!(f, "Contract (CALL)"),
             CallCode { to: _, value: _ } => write!(f, "Contract (CALLCODE)"),
+            Create => write!(f, "Deploy contract (CREATE)"),
+            Create2 => write!(f, "Deploy contract (CREATE2)"),
             DelegateCall { to: _, value: _ } => write!(f, "Contract (DELEGATECALL)"),
             StaticCall { to: _ } => write!(f, "Contract (STATICCALL)"),
             Function { likely_selector } => write!(f, "Function {likely_selector}"),
