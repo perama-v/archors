@@ -8,6 +8,18 @@ pub(crate) enum Eip3155Line {
     Step(EvmStep),
     Output(EvmOutput),
 }
+impl Eip3155Line {
+    pub(crate) fn depth(&self) -> u64 {
+        match self {
+            Eip3155Line::Step(s) => s.depth,
+            Eip3155Line::Output(_) => 0,
+        }
+    }
+
+    pub(crate) fn same_depth(&self, other: &Eip3155Line) -> bool {
+        self.depth() == other.depth()
+    }
+}
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]

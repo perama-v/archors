@@ -8,7 +8,7 @@ use std::fmt::Display;
 
 use crate::{
     ether::Ether,
-    opcode::{EvmOutput, EvmStep},
+    opcode::{Eip3155Line, EvmOutput, EvmStep},
 };
 use thiserror::Error;
 
@@ -69,13 +69,17 @@ pub enum ProcessedStep {
         opcode: String,
     },
     Invalid,
-    Return,
+    Return {
+        stack_top_next: StackTopNext,
+    },
     Revert,
     SelfDestruct,
     StaticCall {
         to: String,
     },
-    Stop,
+    Stop {
+        stack_top_next: StackTopNext,
+    },
     /// Deduction of how a transaction ended.
     TxFinished(FinishMechanism),
     /// EVM output containing specific post-transaction facts.
@@ -163,11 +167,15 @@ impl TryFrom<&EvmStep> for ProcessedStep {
             },
             "INVALID" => match value.depth {
                 1 => Self::TxFinished(FinishMechanism::Invalid),
-                _ => Self::Return,
+                _ => Self::Return {
+                    stack_top_next: StackTopNext::NotChecked,
+                },
             },
             "RETURN" => match value.depth {
                 1 => Self::TxFinished(FinishMechanism::Return),
-                _ => Self::Return,
+                _ => Self::Return {
+                    stack_top_next: StackTopNext::NotChecked,
+                },
             },
             "REVERT" => match value.depth {
                 1 => Self::TxFinished(FinishMechanism::Revert),
@@ -177,7 +185,9 @@ impl TryFrom<&EvmStep> for ProcessedStep {
                 match value.depth {
                     0 => Self::Uninteresting, // Artefact unique to revm (used at start of transactions)
                     1 => Self::TxFinished(FinishMechanism::Stop),
-                    _ => Self::Stop,
+                    _ => Self::Stop {
+                        stack_top_next: StackTopNext::NotChecked,
+                    },
                 }
             }
             "SELFDESTRUCT" => Self::SelfDestruct,
@@ -211,6 +221,57 @@ impl ProcessedStep {
             step => step, // return unchanged
         }
     }
+    /// Includes additional information using the next line from the trace.
+    ///
+    /// E.g., read the top of the stack to see what the effect of the opcode was.
+    pub(crate) fn add_peek(&mut self, current_raw: &Eip3155Line, peek_raw: &Eip3155Line) {
+        match self {
+            ProcessedStep::Call { to, value } => {
+                if current_raw.same_depth(peek_raw) {
+                    // No depth increase, therefore is a pay to no-code account.
+                    *self = ProcessedStep::PayCall {
+                        to: to.clone(),
+                        value: Ether(value.to_string()),
+                        opcode: "CALL".to_string(),
+                    }
+                }
+            }
+            ProcessedStep::CallCode { to, value } => {
+                if current_raw.same_depth(peek_raw) {
+                    // No depth increase, therefore is a pay to no-code account.
+                    *self = ProcessedStep::PayCall {
+                        to: to.clone(),
+                        value: Ether(value.clone()),
+                        opcode: "CALLCODE".to_string(),
+                    }
+                }
+            }
+
+            ProcessedStep::DelegateCall { to, value } => {
+                if current_raw.same_depth(peek_raw) {
+                    // No depth increase, therefore is a pay to no-code account.
+                    *self = ProcessedStep::PayCall {
+                        to: to.clone(),
+                        value: Ether(value.clone()),
+                        opcode: "DELEGATECALL".to_string(),
+                    }
+                }
+            }
+            ProcessedStep::Return { stack_top_next } | ProcessedStep::Stop { stack_top_next } => {
+                // If something is returned, it will be at the top of the stack of the next step/line.
+                match peek_raw {
+                    Eip3155Line::Step(s) => {
+                        *stack_top_next = match s.stack.last() {
+                            Some(item) => StackTopNext::Some(item.clone()),
+                            None => StackTopNext::None,
+                        };
+                    }
+                    Eip3155Line::Output(_) => {}
+                };
+            }
+            _ => {}
+        }
+    }
 }
 
 impl Display for ProcessedStep {
@@ -239,7 +300,9 @@ impl Display for ProcessedStep {
             ),
             Precompile => write!(f, "Precompile used"),
             Invalid => write!(f, "Invalid opcode"),
-            Return => write!(f, "Returned"),
+            Return { stack_top_next } => {
+                write!(f, "Returned (top of stack next is: {stack_top_next:?})")
+            }
             Revert => write!(f, "Reverted"),
             SelfDestruct => write!(f, "Self destructed"),
             Stop => write!(f, "Stopped"),
@@ -300,4 +363,13 @@ pub fn is_precompile<T: AsRef<str>>(address: T) -> bool {
         address.as_ref(),
         "0x1" | "0x2" | "0x3" | "0x4" | "0x5" | "0x6" | "0x7" | "0x8" | "0x9"
     )
+}
+
+// Top of the stack for the next opcode.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum StackTopNext {
+    NotChecked,
+    None,
+    Some(String),
 }

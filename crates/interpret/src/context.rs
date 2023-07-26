@@ -110,10 +110,10 @@ pub fn get_pending_context_update(
             Ok(update)
         }
         ProcessedStep::Invalid
-        | ProcessedStep::Return
+        | ProcessedStep::Return { stack_top_next: _ }
         | ProcessedStep::Revert
         | ProcessedStep::SelfDestruct
-        | ProcessedStep::Stop => Ok(ContextUpdate::Remove),
+        | ProcessedStep::Stop { stack_top_next: _ } => Ok(ContextUpdate::Remove),
         ProcessedStep::TxFinished(_) => Ok(ContextUpdate::Reset),
         _ => Ok(ContextUpdate::None),
     }

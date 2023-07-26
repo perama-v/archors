@@ -50,43 +50,38 @@ pub fn process_trace() {
                 }
             }
         })
-        .filter_map(|step| {
-            // Add processed information to step.
-            // Exclude uninteresting steps (ADD, ISZERO, ...)
-            process_step(&step).map(|processed| {
-                let current_count = transaction_counter;
-                if let ProcessedStep::TxSummary {
-                    output: _,
-                    gas_used: _,
-                } = &processed
-                {
-                    transaction_counter += 1; // for next tx (if present)
-                }
-                Step {
-                    trace: step,
-                    processed,
-                    tx_count: current_count,
-                }
-            })
-        })
         .peekable();
 
     let mut context: Vec<Context> = vec![Context::default()];
     let mut pending_context = ContextUpdate::None;
     let mut create_counter: usize = 0;
 
-    while let Some(line) = peekable_lines.next() {
-        let parsed_line = match peekable_lines.peek() {
-            Some(peek) => line.detect_call_to_no_code(peek),
-            None => line.update_final_line(),
+    while let Some(unprocessed_step) = peekable_lines.next() {
+        // Add processed information to step.
+        // Exclude uninteresting steps (ADD, ISZERO, ...)
+        let Some(mut processed) = process_step(&unprocessed_step) else {continue};
+
+        // Get the stack from the peek and include it in the processed step.
+        if let Some(peek) = peekable_lines.peek() {
+            processed.add_peek(&unprocessed_step, peek);
+        }
+        // Update transaction counter.
+        let tx_count = transaction_counter;
+        if let ProcessedStep::TxSummary { .. } = processed {
+            transaction_counter += 1;
+        };
+        // Group processed and raw information together.
+        let step = Step {
+            trace: unprocessed_step,
+            processed,
+            tx_count,
         };
 
         apply_pending_context(&mut context, &mut pending_context);
         pending_context =
-            get_pending_context_update(&context, &parsed_line.processed, &mut create_counter)
-                .unwrap();
+            get_pending_context_update(&context, &step.processed, &mut create_counter).unwrap();
 
-        let juncture = parsed_line.as_juncture(&context);
+        let juncture = step.as_juncture(&context);
         juncture.print_pretty();
     }
 }
