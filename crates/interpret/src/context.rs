@@ -25,6 +25,19 @@ pub struct Context {
     pub message_sender: Address,
     /// Address that storage modifications affect.
     pub storage_address: Address,
+    /// Create-related information
+    pub create_data: Option<CreateData>,
+}
+
+/// Create-related context
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateData {
+    /// Contract creation index for transaction (first = 0, ...)
+    ///
+    /// Every use of CREATE/CREATE2 increments the index. Keeps track of addresses
+    /// when they are returned.
+    pub index: usize,
 }
 
 /// A contract may
@@ -70,6 +83,7 @@ pub fn get_pending_context_update(
                 code_address: Address::Standard(to.clone()),
                 message_sender: previous.message_sender.clone(),
                 storage_address: Address::Standard(to.clone()),
+                create_data: None,
             }))
         }
         ProcessedStep::CallCode { to, value: _ } => {
@@ -81,6 +95,7 @@ pub fn get_pending_context_update(
                 code_address: Address::Standard(to.clone()),
                 message_sender: previous.code_address.clone(), // important
                 storage_address: previous.storage_address.clone(),
+                create_data: None,
             }))
         }
         ProcessedStep::DelegateCall { to, value: _ } => {
@@ -92,6 +107,7 @@ pub fn get_pending_context_update(
                 code_address: Address::Standard(to.clone()),
                 message_sender: previous.message_sender.clone(), // important
                 storage_address: previous.storage_address.clone(),
+                create_data: None,
             }))
         }
         ProcessedStep::Create | ProcessedStep::Create2 => {
@@ -104,6 +120,9 @@ pub fn get_pending_context_update(
                 storage_address: Address::CreatedPending {
                     index: *create_counter,
                 },
+                create_data: Some(CreateData {
+                    index: *create_counter,
+                }),
             });
             // The next contract created will have a different index.
             *create_counter += 1;
@@ -143,6 +162,7 @@ impl Default for Context {
             code_address: Address::Standard("tx.to".to_string()),
             message_sender: Address::Standard("tx.from".to_string()),
             storage_address: Address::Standard("tx.to".to_string()),
+            create_data: None,
         }
     }
 }

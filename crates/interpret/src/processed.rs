@@ -277,13 +277,13 @@ impl Display for ProcessedStep {
             ),
             Precompile => write!(f, "Precompile used"),
             Invalid => write!(f, "Invalid opcode"),
-            Return { stack_top_next } => {
-                write!(f, "Returned (top of stack next is: {stack_top_next:?})")
+            Return { stack_top_next: _ } => {
+                write!(f, "Returned")
             }
             Revert => write!(f, "Reverted"),
             SelfDestruct => write!(f, "Self destructed"),
-            Stop { stack_top_next } => {
-                write!(f, "Stopped (top of stack next is: {stack_top_next:?})")
+            Stop { stack_top_next: _ } => {
+                write!(f, "Stopped")
             }
             TxFinished(mechanism) => write!(f, "Transaction finished ({mechanism})"),
             TxSummary { output, gas_used } => write!(

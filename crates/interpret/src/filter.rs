@@ -9,9 +9,7 @@
 // Resources
 /// - EVMOne: https://github.com/ethereum/evmone/pull/325
 /// - Test case: https://github.com/Arachnid/EIPs/commit/28e73864f72d66b5dd31fdb5f7502f0327075131
-use std::{cmp::Ordering, io::BufRead};
-
-use serde::{Deserialize, Serialize};
+use std::io::BufRead;
 
 use thiserror::Error;
 

@@ -5,7 +5,11 @@ use serde::Serialize;
 use serde_json::json;
 use std::fmt::Display;
 
-use crate::{context::Context, opcode::Eip3155Line, processed::ProcessedStep};
+use crate::{
+    context::Context,
+    opcode::Eip3155Line,
+    processed::{ProcessedStep, StackTopNext},
+};
 
 use thiserror::Error;
 
@@ -95,6 +99,23 @@ impl Display for Juncture<'_> {
                 output: _,
                 gas_used: _,
             } => write!(f, "Transaction {} complete. {}", self.tx_count, self.action),
+            Return { stack_top_next } | Stop { stack_top_next } => {
+                // Check if in create context. If so, display created contract address.
+                match &self.current_context.create_data {
+                    Some(create_data) => {
+                        let address = match stack_top_next {
+                            StackTopNext::Some(addr) => addr,
+                            _ => todo!("Error, expected address on stack"),
+                        };
+                        write!(
+                            f,
+                            "{}. Created contract (index {}) has address {}",
+                            self.action, create_data.index, address
+                        )
+                    }
+                    None => write!(f, "{}", self.action),
+                }
+            }
             _ => write!(f, "{}", self.action),
         }
     }
