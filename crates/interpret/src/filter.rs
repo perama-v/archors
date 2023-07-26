@@ -70,18 +70,15 @@ pub fn process_trace() {
         if let ProcessedStep::TxSummary { .. } = processed {
             transaction_counter += 1;
         };
-        // Group processed and raw information together.
-        let step = Step {
-            trace: unprocessed_step,
-            processed,
-            tx_count,
-        };
 
+        // Update context
         apply_pending_context(&mut context, &mut pending_context);
         pending_context =
-            get_pending_context_update(&context, &step.processed, &mut create_counter).unwrap();
+            get_pending_context_update(&context, &processed, &mut create_counter).unwrap();
 
-        let juncture = step.as_juncture(&context);
+        // Group processed and raw information together.
+
+        let juncture = Juncture::create(&processed, &unprocessed_step, &context, tx_count);
         juncture.print_pretty();
     }
 }
@@ -95,59 +92,5 @@ fn process_step(step: &Eip3155Line) -> Option<ProcessedStep> {
             Err(_) => None,
         },
         Eip3155Line::Output(evm_output) => Some(ProcessedStep::from(evm_output)),
-    }
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct Step {
-    pub trace: Eip3155Line,
-    pub processed: ProcessedStep,
-    pub tx_count: usize,
-}
-impl Step {
-    /// Some opcodes have different behaviour, which can
-    /// be understood by peeking at the next opcode.
-    ///
-    /// E.g. Call to account with no code (sends ether, no context increase).
-    fn detect_call_to_no_code(self, peek: &Step) -> Step {
-        let mut current = self;
-        let current_depth = match current.trace {
-            Eip3155Line::Step(ref s) => s.depth,
-            Eip3155Line::Output(_) => 0,
-        };
-        let peek_depth = match peek.trace {
-            Eip3155Line::Step(ref s) => s.depth,
-            Eip3155Line::Output(_) => 0,
-        };
-        match peek_depth.cmp(&current_depth) {
-            Ordering::Less => {}    // peek has less context
-            Ordering::Greater => {} // added context
-            Ordering::Equal => {
-                // same context
-                // If call type, this is a call to an account with no code.
-                current.processed = current.processed.clone().convert_to_codeless_call();
-            }
-        }
-        current
-    }
-    /// In the stream, the final line does not have a subsequent line to peek from.
-    fn update_final_line(self) -> Step {
-        self
-    }
-    /// Convert to juncture (to display)
-    fn as_juncture<'a>(&'a self, context: &'a [Context]) -> Juncture {
-        let current_context = context.last().unwrap();
-        let context_depth = match &self.trace {
-            Eip3155Line::Step(s) => Some(s.depth as usize),
-            Eip3155Line::Output(_) => None,
-        };
-        Juncture {
-            action: &self.processed,
-            raw_trace: &self.trace,
-            current_context,
-            context_depth,
-            tx_count: self.tx_count,
-        }
     }
 }

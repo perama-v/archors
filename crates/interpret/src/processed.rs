@@ -198,29 +198,6 @@ impl TryFrom<&EvmStep> for ProcessedStep {
 }
 
 impl ProcessedStep {
-    /// Converts a call-type opcode that just sends ether when the target has no code.
-    ///
-    /// Note STATICCALL does not have this behaviour.
-    pub fn convert_to_codeless_call(self) -> ProcessedStep {
-        match self {
-            ProcessedStep::Call { to, value } => ProcessedStep::PayCall {
-                to,
-                value: Ether(value),
-                opcode: "CALL".to_string(),
-            },
-            ProcessedStep::CallCode { to, value } => ProcessedStep::PayCall {
-                to,
-                value: Ether(value),
-                opcode: "CALLCODE".to_string(),
-            },
-            ProcessedStep::DelegateCall { to, value } => ProcessedStep::PayCall {
-                to,
-                value: Ether(value),
-                opcode: "DELEGATECALL".to_string(),
-            },
-            step => step, // return unchanged
-        }
-    }
     /// Includes additional information using the next line from the trace.
     ///
     /// E.g., read the top of the stack to see what the effect of the opcode was.
@@ -305,7 +282,9 @@ impl Display for ProcessedStep {
             }
             Revert => write!(f, "Reverted"),
             SelfDestruct => write!(f, "Self destructed"),
-            Stop => write!(f, "Stopped"),
+            Stop { stack_top_next } => {
+                write!(f, "Stopped (top of stack next is: {stack_top_next:?})")
+            }
             TxFinished(mechanism) => write!(f, "Transaction finished ({mechanism})"),
             TxSummary { output, gas_used } => write!(
                 f,

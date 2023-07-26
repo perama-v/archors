@@ -42,6 +42,27 @@ impl Juncture<'_> {
     pub fn print_debug(&self) {
         println!("{self:?}");
     }
+    pub fn create<'a>(
+        processed: &'a ProcessedStep,
+        unprocessed_step: &'a Eip3155Line,
+        context: &'a [Context],
+        tx_count: usize,
+    ) -> Juncture<'a> {
+        Juncture {
+            action: processed,
+            raw_trace: unprocessed_step,
+            current_context: context.last().unwrap(),
+            context_depth: {
+                let depth = unprocessed_step.depth();
+                if depth == 0 {
+                    None
+                } else {
+                    Some(depth as usize)
+                }
+            },
+            tx_count,
+        }
+    }
 }
 
 impl Display for Juncture<'_> {
