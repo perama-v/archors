@@ -9,7 +9,9 @@ In the example below, revm executes a block producing an EIP3155 trace, which is
 filtered and interpreted. That is then passed to operator to display.
 
 ```command
-cargo run --release --example 09_use_proof \
-    | cargo run --release --example 11_interpret_trace \
-    | cargo run --release operator
+cargo run --release --example 09_use_proof | cargo run --release -p archors_interpret | cargo run --release -p archors_operator
+```
+Or for the raw trace:
+```command
+cargo run --release --example 09_use_proof | cargo run --release -p archors_operator
 ```
