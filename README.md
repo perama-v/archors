@@ -78,6 +78,7 @@ node must provide both:
 
 ## Modes
 
+### Libraries
 |example number|crate used|function|
 |-|-|-|
 |1, 2, 3|inventory|obtain and cache block data from a node|
@@ -87,7 +88,26 @@ node must provide both:
 |8|verify|verify merkle proof for block|
 |9|tracer|locally produce `debug_traceTransaction` / `debug_traceBlock` using proof data|
 |10|inventory|obtain required state in one pass|
-|11|interpret|pure function to make traces meaningful|
+
+### Binary: Interpret
+
+Converts stdin trace into stdout interpreted trace.
+
+This command gets a trace then interprets it.
+```command
+cargo run --release --example 09_use_proof | cargo run --release -p archors_interpret
+```
+
+### Binary: Operator
+
+Converts stdin lines into aesthetic vertical stream of data.
+
+This command gets a trace, interprets it, then displays it.
+```command
+cargo run --release --example 09_use_proof \
+    | cargo run --release -p archors_interpret \
+    | cargo run --release -p archors_operator
+```
 
 ## Use case
 

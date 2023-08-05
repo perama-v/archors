@@ -9,7 +9,7 @@
 // Resources
 /// - EVMOne: https://github.com/ethereum/evmone/pull/325
 /// - Test case: https://github.com/Arachnid/EIPs/commit/28e73864f72d66b5dd31fdb5f7502f0327075131
-use std::io::BufRead;
+use std::io::{BufRead, Write};
 
 use thiserror::Error;
 
@@ -54,6 +54,8 @@ pub fn process_trace() {
     let mut pending_context = ContextUpdate::None;
     let mut create_counter: usize = 0;
 
+    let mut stdout = Box::new(std::io::stdout());
+
     while let Some(unprocessed_step) = peekable_lines.next() {
         // Add processed information to step.
         // Exclude uninteresting steps (ADD, ISZERO, ...)
@@ -77,7 +79,9 @@ pub fn process_trace() {
         // Group processed and raw information together.
 
         let juncture = Juncture::create(&processed, &unprocessed_step, &context, tx_count);
-        juncture.print_pretty();
+        //juncture.print_json();
+        //juncture.print_pretty();
+        writeln!(stdout, "{}", juncture).expect("Could not write to stdout");
     }
 }
 

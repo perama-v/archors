@@ -7,11 +7,11 @@ description = "Tool for single Ethereum archival block state proofs"
 [workspace]
 members = [
     "crates/*",
+    "bin/*"
 ]
 
 [dependencies]
 archors_inventory = { path = "crates/inventory"}
-archors_interpret = { path = "crates/interpret"}
 archors_tracer = { path = "crates/tracer"}
 archors_types = { path = "crates/types"}
 archors_verify = { path = "crates/verify"}
