@@ -1,0 +1,10 @@
+[package]
+name = "archors_operator"
+version = "0.1.0"
+edition = "2021"
+description = "Redirect stdin lines to fall from the top of the terminal"
+
+[dependencies]
+anyhow = "1.0.69"
+crossterm = "0.26.1"
+rand = "0.8.5"
