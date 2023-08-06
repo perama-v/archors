@@ -1,5 +1,3 @@
-use std::env;
-
 use anyhow::Result;
 use archors_inventory::{
     cache::{get_block_from_cache, get_required_state_from_cache},

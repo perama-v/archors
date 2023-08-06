@@ -1,5 +1,5 @@
 use anyhow::Result;
-use archors_inventory::cache::{compress_proofs, create_transferrable_proof};
+use archors_inventory::cache::create_transferrable_proof;
 
 /// Uses a cached block accessed state proof and either:
 /// - compresses the file.

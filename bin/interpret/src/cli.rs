@@ -3,8 +3,16 @@
 use clap::{Parser, ValueEnum};
 
 /// Interpret an EVM trace. To use: Pipe NDJSON trace to the app.
+///
 /// NDJSON can be made from JSON-RPC by:
+/// ```
 /// <call node> | jq '.["result"]["structLogs"][]' -c | <archors_interpret>
+/// ```
+/// (for a single transaction) or
+/// ```
+/// <call node> | jq '.["result"][]["result"]["structLogs"][]' -c | <archors_interpret>
+/// ```
+/// (for a whole block)
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 pub struct AppArgs {

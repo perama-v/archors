@@ -260,25 +260,25 @@ impl Display for ProcessedStep {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use ProcessedStep::*;
         match self {
-            Call { to: _, value: _ } => write!(f, "Contract (CALL)"),
-            CallCode { to: _, value: _ } => write!(f, "Contract (CALLCODE)"),
-            Create => write!(f, "Deploy contract (CREATE)"),
-            Create2 => write!(f, "Deploy contract (CREATE2)"),
-            DelegateCall { to: _, value: _ } => write!(f, "Contract (DELEGATECALL)"),
-            StaticCall { to: _ } => write!(f, "Contract (STATICCALL)"),
-            Function { likely_selector } => write!(f, "Function {likely_selector}"),
+            Call { to: _, value: _ } => write!(f, "Contract CALL"),
+            CallCode { to: _, value: _ } => write!(f, "Contract CALLCODE"),
+            Create => write!(f, "Deploy contract CREATE"),
+            Create2 => write!(f, "Deploy contract CREATE2"),
+            DelegateCall { to: _, value: _ } => write!(f, "Contract DELEGATECALL"),
+            StaticCall { to: _ } => write!(f, "Contract STATICCALL"),
+            Function { likely_selector } => write!(f, "{likely_selector} function called"),
             Log0 => write!(f, "Log created"),
-            Log1 { name } => write!(f, "Log1 created ({name})"),
-            Log2 { name } => write!(f, "Log2 created ({name})"),
-            Log3 { name } => write!(f, "Log3 created ({name})"),
-            Log4 { name } => write!(f, "Log4 created ({name})"),
+            Log1 { name } => write!(f, "Log1 {name} created"),
+            Log2 { name } => write!(f, "Log2 {name} created"),
+            Log3 { name } => write!(f, "Log3 {name} created"),
+            Log4 { name } => write!(f, "Log4 {name} created"),
             Push4 {
                 stack_0: _,
                 stack_1: _,
             } => Ok(()),
             PayCall { to, value, opcode } => write!(
                 f,
-                "{value} ether paid to {to} ({opcode} to codeless account)"
+                "{value} ether paid to {to} with {opcode} to codeless account"
             ),
             Precompile => write!(f, "Precompile used"),
             Invalid => write!(f, "Invalid opcode"),
@@ -290,7 +290,7 @@ impl Display for ProcessedStep {
             Stop { stack_top_next: _ } => {
                 write!(f, "Stopped")
             }
-            TxFinished(mechanism) => write!(f, "Transaction finished ({mechanism})"),
+            TxFinished(mechanism) => write!(f, "Transaction finished {mechanism}"),
             TxSummary { output, gas_used } => write!(
                 f,
                 "Transaction summary, gas used: {gas_used}, output: {output}"
