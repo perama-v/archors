@@ -7,6 +7,27 @@ The output is readable so one can see what the transaction did.
 
 The function is pure in that only the transaction trace is used
 
+## Flags
+
+The interpreter may be passed different trace styles, as long as they are NDJSON.
+
+### EIP-3155
+
+This will be NDJSON by default. No flag is required for this style
+
+### `debug_traceTransaction` and `debug_traceBlockByNumber`
+
+This will be a JSON object and may be converted to NDJSON as follows:
+```
+<trace> | jq '.["result"]["structLogs"][]' -c
+```
+The `--debug` flag must be used for this kind of trace.
+For example:
+```
+curl -X POST -H "Content-Type: application/json" --data '{"jsonrpc": "2.0", "method": "debug_traceTransaction", "params": ["0x8f5dd8107e2efce82759c9bbf34ac7bab49a2992b2f2ee6fc9d510f5e2490680", {"disableMemory": true}], "id":1}' http://127.0.0.1:8545 \
+    | jq '.["result"]["structLogs"][]' -c \
+    | cargo run --release -p archors_interpret --debug
+```
 ## Examples
 
 ### Multiple contract creations
@@ -153,4 +174,16 @@ Function 0x1a1da075
 1.5 ether paid to 0x68388d48b5baf99755ea9c685f15b0528edf90b6 (CALL to codeless account) from tx.from
 Transaction finished (STOP)
 Transaction 0 complete. Transaction summary, gas used: 0x1aa70e, output: 0x
+```
+
+## Trace naming differences
+One must be aware of the difference between the fields in different tracing kinds:
+
+`debug_traceBlockByNumber`
+```
+{"pc":25,"op":"JUMPI","gas":630770,"gasCost":10,"depth":2,"stack":["0x0","0x454"]}
+```
+EIP-3155 trace:
+```
+{"pc":133,"op":86,"gas":"0x4ec9a","gasCost":"0x8","memSize":384,"stack":["0x8467be0d","0x43"],"depth":1,"opName":"JUMP"}
 ```

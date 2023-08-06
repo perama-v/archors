@@ -4,26 +4,28 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) enum Eip3155Line {
-    Step(EvmStep),
+pub(crate) enum TraceLine {
+    StepDebug(EvmStepDebug),
+    StepEip3155(EvmStepEip3155),
     Output(EvmOutput),
 }
-impl Eip3155Line {
+impl TraceLine {
     pub(crate) fn depth(&self) -> u64 {
         match self {
-            Eip3155Line::Step(s) => s.depth,
-            Eip3155Line::Output(_) => 0,
+            TraceLine::StepDebug(s) => *s.depth(),
+            TraceLine::StepEip3155(s) => *s.depth(),
+            TraceLine::Output(_) => 0,
         }
     }
 
-    pub(crate) fn same_depth(&self, other: &Eip3155Line) -> bool {
+    pub(crate) fn same_depth(&self, other: &TraceLine) -> bool {
         self.depth() == other.depth()
     }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct EvmStep {
+pub(crate) struct EvmStepEip3155 {
     pub(crate) pc: u64,
     pub(crate) op: u64,
     pub(crate) gas: String,
@@ -40,4 +42,52 @@ pub(crate) struct EvmStep {
 pub(crate) struct EvmOutput {
     pub(crate) output: String,
     pub(crate) gas_used: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct EvmStepDebug {
+    pub(crate) pc: u64,
+    pub(crate) op: String,
+    pub(crate) gas: u64,
+    pub(crate) gas_cost: u64,
+    pub(crate) depth: u64,
+    pub(crate) stack: Vec<String>,
+    pub(crate) memory: Option<Vec<String>>,
+}
+
+pub trait EvmStep {
+    fn op_name(&self) -> &str;
+
+    fn stack(&self) -> &[String];
+
+    fn depth(&self) -> &u64;
+}
+
+impl EvmStep for EvmStepDebug {
+    fn op_name(&self) -> &str {
+        &self.op
+    }
+
+    fn stack(&self) -> &[String] {
+        &self.stack
+    }
+
+    fn depth(&self) -> &u64 {
+        &self.depth
+    }
+}
+
+impl EvmStep for EvmStepEip3155 {
+    fn op_name(&self) -> &str {
+        &self.op_name
+    }
+
+    fn stack(&self) -> &[String] {
+        &self.stack
+    }
+
+    fn depth(&self) -> &u64 {
+        &self.depth
+    }
 }

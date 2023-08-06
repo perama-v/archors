@@ -8,7 +8,7 @@ use std::fmt::Display;
 
 use crate::{
     ether::Ether,
-    opcode::{Eip3155Line, EvmOutput, EvmStep},
+    opcode::{EvmOutput, EvmStep, TraceLine},
 };
 use thiserror::Error;
 
@@ -90,22 +90,21 @@ pub enum ProcessedStep {
     Uninteresting,
 }
 
-impl TryFrom<&EvmStep> for ProcessedStep {
-    type Error = ProcessedError;
-    fn try_from(value: &EvmStep) -> Result<Self, Self::Error> {
-        let op_name = value.op_name.as_str();
+impl ProcessedStep {
+    pub fn try_from_evm_step<T: EvmStep>(value: &T) -> Result<Self, ProcessedError> {
+        let op_name: &str = value.op_name();
         Ok(match op_name {
             "CALL" => {
-                let to = stack_nth(&value.stack, 1)?;
-                let value = stack_nth(&value.stack, 2)?;
+                let to = stack_nth(value.stack(), 1)?;
+                let value = stack_nth(value.stack(), 2)?;
                 match is_precompile(&to) {
                     true => Self::Precompile,
                     false => Self::Call { to, value },
                 }
             }
             "CALLCODE" => {
-                let to = stack_nth(&value.stack, 1)?;
-                let value = stack_nth(&value.stack, 2)?;
+                let to = stack_nth(value.stack(), 1)?;
+                let value = stack_nth(value.stack(), 2)?;
                 match is_precompile(&to) {
                     true => Self::Precompile,
                     false => Self::CallCode { to, value },
@@ -114,15 +113,15 @@ impl TryFrom<&EvmStep> for ProcessedStep {
             "CREATE" => Self::Create,
             "CREATE2" => Self::Create2,
             "DELEGATECALL" => {
-                let to = stack_nth(&value.stack, 1)?;
-                let value = stack_nth(&value.stack, 2)?;
+                let to = stack_nth(value.stack(), 1)?;
+                let value = stack_nth(value.stack(), 2)?;
                 match is_precompile(&to) {
                     true => Self::Precompile,
                     false => Self::DelegateCall { to, value },
                 }
             }
             "STATICCALL" => {
-                let to = stack_nth(&value.stack, 1)?;
+                let to = stack_nth(value.stack(), 1)?;
                 match is_precompile(&to) {
                     true => Self::Precompile,
                     false => Self::StaticCall { to },
@@ -139,9 +138,9 @@ impl TryFrom<&EvmStep> for ProcessedStep {
                 // The third item on the stack usually contains the selector of interest
                 // because it is prepared for failed lookups.
                 // Next lookup is loaded by DUP1 -> PUSH4 -> JUMPI or similar.
-                let reserved = stack_nth(&value.stack, 2)?;
+                let reserved = stack_nth(value.stack(), 2)?;
                 let four_bytes_reserved = reserved.len() == 10; // ten chars 0x00000000
-                let jumping = stack_nth(&value.stack, 1)? != "0x0";
+                let jumping = stack_nth(value.stack(), 1)? != "0x0";
                 if four_bytes_reserved && jumping {
                     // Using a jump table
                     Self::Function {
@@ -154,35 +153,35 @@ impl TryFrom<&EvmStep> for ProcessedStep {
             }
             "LOG0" => Self::Log0,
             "LOG1" => Self::Log1 {
-                name: stack_nth(&value.stack, 2)?,
+                name: stack_nth(value.stack(), 2)?,
             },
             "LOG2" => Self::Log2 {
-                name: stack_nth(&value.stack, 2)?,
+                name: stack_nth(value.stack(), 2)?,
             },
             "LOG3" => Self::Log3 {
-                name: stack_nth(&value.stack, 2)?,
+                name: stack_nth(value.stack(), 2)?,
             },
             "LOG4" => Self::Log4 {
-                name: stack_nth(&value.stack, 2)?,
+                name: stack_nth(value.stack(), 2)?,
             },
-            "INVALID" => match value.depth {
+            "INVALID" => match value.depth() {
                 1 => Self::TxFinished(FinishMechanism::Invalid),
                 _ => Self::Return {
                     stack_top_next: StackTopNext::NotChecked,
                 },
             },
-            "RETURN" => match value.depth {
+            "RETURN" => match value.depth() {
                 1 => Self::TxFinished(FinishMechanism::Return),
                 _ => Self::Return {
                     stack_top_next: StackTopNext::NotChecked,
                 },
             },
-            "REVERT" => match value.depth {
+            "REVERT" => match value.depth() {
                 1 => Self::TxFinished(FinishMechanism::Revert),
                 _ => Self::Revert,
             },
             "STOP" => {
-                match value.depth {
+                match value.depth() {
                     0 => Self::Uninteresting, // Artefact unique to revm (used at start of transactions)
                     1 => Self::TxFinished(FinishMechanism::Stop),
                     _ => Self::Stop {
@@ -201,7 +200,7 @@ impl ProcessedStep {
     /// Includes additional information using the next line from the trace.
     ///
     /// E.g., read the top of the stack to see what the effect of the opcode was.
-    pub(crate) fn add_peek(&mut self, current_raw: &Eip3155Line, peek_raw: &Eip3155Line) {
+    pub(crate) fn add_peek(&mut self, current_raw: &TraceLine, peek_raw: &TraceLine) {
         match self {
             ProcessedStep::Call { to, value } => {
                 if current_raw.same_depth(peek_raw) {
@@ -237,13 +236,19 @@ impl ProcessedStep {
             ProcessedStep::Return { stack_top_next } | ProcessedStep::Stop { stack_top_next } => {
                 // If something is returned, it will be at the top of the stack of the next step/line.
                 match peek_raw {
-                    Eip3155Line::Step(s) => {
-                        *stack_top_next = match s.stack.last() {
+                    TraceLine::StepDebug(s) => {
+                        *stack_top_next = match s.stack().last() {
                             Some(item) => StackTopNext::Some(item.clone()),
                             None => StackTopNext::None,
                         };
                     }
-                    Eip3155Line::Output(_) => {}
+                    TraceLine::StepEip3155(s) => {
+                        *stack_top_next = match s.stack().last() {
+                            Some(item) => StackTopNext::Some(item.clone()),
+                            None => StackTopNext::None,
+                        };
+                    }
+                    TraceLine::Output(_) => {}
                 };
             }
             _ => {}

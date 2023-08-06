@@ -16,7 +16,7 @@ use thiserror::Error;
 use crate::{
     context::{apply_pending_context, get_pending_context_update, Context, ContextUpdate},
     juncture::Juncture,
-    opcode::{Eip3155Line, EvmOutput, EvmStep},
+    opcode::{EvmOutput, EvmStep, EvmStepDebug, EvmStepEip3155, TraceLine},
     processed::ProcessedStep,
 };
 
@@ -26,7 +26,15 @@ pub enum FilterError {
     SerdeJson(#[from] serde_json::Error),
 }
 
+pub enum ModeFlag {
+    Eip3155,
+    /// For debug_traceBlockByNumber or debug_traceTransaction
+    Debug,
+}
+
 pub fn process_trace() {
+    let trace_style = ModeFlag::Debug;
+
     let stdin = std::io::stdin();
     let reader = stdin.lock();
 
@@ -38,13 +46,33 @@ pub fn process_trace() {
             Ok(l) => Some(l),
             Err(_) => None, // Bad stdin line
         })
-        .filter_map(|line| match serde_json::from_str::<EvmStep>(&line) {
-            Ok(step) => Some(Eip3155Line::Step(step)),
-            Err(_) => {
-                // Not an EvmStep (e.g., output)
-                match serde_json::from_str::<EvmOutput>(&line) {
-                    Ok(output) => Some(Eip3155Line::Output(output)),
-                    Err(_) => None, // Not an EvmStep or Output
+        .filter_map(|line| {
+            match trace_style {
+                ModeFlag::Eip3155 => {
+                    let json = serde_json::from_str::<EvmStepEip3155>(&line);
+                    match json {
+                        Ok(step) => Some(TraceLine::StepEip3155(step)),
+                        Err(_) => {
+                            // Not an EvmStep (e.g., output)
+                            match serde_json::from_str::<EvmOutput>(&line) {
+                                Ok(output) => Some(TraceLine::Output(output)),
+                                Err(_) => None, // Not an EvmStep or Output
+                            }
+                        }
+                    }
+                }
+                ModeFlag::Debug => {
+                    let json = serde_json::from_str::<EvmStepDebug>(&line);
+                    match json {
+                        Ok(step) => Some(TraceLine::StepDebug(step)),
+                        Err(_) => {
+                            // Not an EvmStep (e.g., output)
+                            match serde_json::from_str::<EvmOutput>(&line) {
+                                Ok(output) => Some(TraceLine::Output(output)),
+                                Err(_) => None, // Not an EvmStep or Output
+                            }
+                        }
+                    }
                 }
             }
         })
@@ -86,13 +114,18 @@ pub fn process_trace() {
 }
 
 /// If a line from the trace is of interest, a new representation is created.
-fn process_step(step: &Eip3155Line) -> Option<ProcessedStep> {
+fn process_step(step: &TraceLine) -> Option<ProcessedStep> {
     match step {
-        Eip3155Line::Step(evm_step) => match ProcessedStep::try_from(evm_step) {
+        TraceLine::StepEip3155(evm_step) => match ProcessedStep::try_from_evm_step(evm_step) {
             Ok(ProcessedStep::Uninteresting) => None,
             Ok(processed_step) => Some(processed_step),
             Err(_) => None,
         },
-        Eip3155Line::Output(evm_output) => Some(ProcessedStep::from(evm_output)),
+        TraceLine::StepDebug(evm_step) => match ProcessedStep::try_from_evm_step(evm_step) {
+            Ok(ProcessedStep::Uninteresting) => None,
+            Ok(processed_step) => Some(processed_step),
+            Err(_) => None,
+        },
+        TraceLine::Output(evm_output) => Some(ProcessedStep::from(evm_output)),
     }
 }

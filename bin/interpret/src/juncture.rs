@@ -7,7 +7,7 @@ use std::fmt::Display;
 
 use crate::{
     context::Context,
-    opcode::Eip3155Line,
+    opcode::{EvmStep, TraceLine},
     processed::{ProcessedStep, StackTopNext},
 };
 
@@ -25,7 +25,7 @@ pub enum JunctureError {
 pub(crate) struct Juncture<'a> {
     pub action: &'a ProcessedStep,
     #[serde(skip_serializing)]
-    pub raw_trace: &'a Eip3155Line,
+    pub raw_trace: &'a TraceLine,
     pub current_context: &'a Context,
     pub context_depth: Option<usize>,
     pub tx_count: usize,
@@ -48,7 +48,7 @@ impl Juncture<'_> {
     }
     pub fn create<'a>(
         processed: &'a ProcessedStep,
-        unprocessed_step: &'a Eip3155Line,
+        unprocessed_step: &'a TraceLine,
         context: &'a [Context],
         tx_count: usize,
     ) -> Juncture<'a> {
