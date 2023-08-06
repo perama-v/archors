@@ -17,7 +17,7 @@ use crate::{
     cli::ModeFlag,
     context::{apply_pending_context, get_pending_context_update, Context, ContextUpdate},
     juncture::Juncture,
-    opcode::{EvmOutput, EvmStep, EvmStepDebug, EvmStepEip3155, TraceLine},
+    opcode::{EvmOutput, EvmStepDebug, EvmStepEip3155, TraceLine},
     processed::ProcessedStep,
 };
 

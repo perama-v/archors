@@ -60,7 +60,7 @@ impl BlockExecutor {
                 .as_u64() as usize;
             if index == target_tx_index {
                 // Execute with tracing.
-                let outcome = self
+                let _outcome = self
                     .block_evm
                     .add_transaction_environment(tx)
                     .map_err(|source| TraceError::TxEnvError { source, index })?
@@ -70,7 +70,7 @@ impl BlockExecutor {
                 return Ok(());
             }
             // Execute without tracing.
-            let outcome = self
+            let _outcome = self
                 .block_evm
                 .add_transaction_environment(tx)
                 .map_err(|source| TraceError::TxEnvError { source, index })?
@@ -82,7 +82,7 @@ impl BlockExecutor {
     /// Traces every transaction in the block.
     pub fn trace_block(mut self) -> Result<(), TraceError> {
         for (index, tx) in self.block.transactions.into_iter().enumerate() {
-            let outcome = self
+            let _outcome = self
                 .block_evm
                 .add_transaction_environment(tx)
                 .map_err(|source| TraceError::TxEnvError { source, index })?

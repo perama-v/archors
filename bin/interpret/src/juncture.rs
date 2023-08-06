@@ -7,7 +7,7 @@ use std::fmt::Display;
 
 use crate::{
     context::Context,
-    opcode::{EvmStep, TraceLine},
+    opcode::TraceLine,
     processed::{ProcessedStep, StackTopNext},
 };
 
@@ -25,7 +25,7 @@ pub enum JunctureError {
 pub(crate) struct Juncture<'a> {
     pub action: &'a ProcessedStep,
     #[serde(skip_serializing)]
-    pub raw_trace: &'a TraceLine,
+    pub _raw_trace: &'a TraceLine,
     pub current_context: &'a Context,
     pub context_depth: Option<usize>,
     pub tx_count: usize,
@@ -33,17 +33,17 @@ pub(crate) struct Juncture<'a> {
 
 impl Juncture<'_> {
     /// Prints to stdout ina minimal, human readable format.
-    pub fn print_pretty(&self) {
+    pub fn _print_pretty(&self) {
         println!("{self}");
     }
     /// Prints in newline delimited JSON.
     ///
     /// Useful if another system will ingest the stream from stdout.
-    pub fn print_json(&self) {
+    pub fn _print_json(&self) {
         println!("{}", json!(self));
     }
     /// Prints dense information, useful for debugging.
-    pub fn print_debug(&self) {
+    pub fn _print_debug(&self) {
         println!("{self:?}");
     }
     pub fn create<'a>(
@@ -54,7 +54,7 @@ impl Juncture<'_> {
     ) -> Juncture<'a> {
         Juncture {
             action: processed,
-            raw_trace: unprocessed_step,
+            _raw_trace: unprocessed_step,
             current_context: context.last().unwrap(),
             context_depth: {
                 let depth = unprocessed_step.depth();

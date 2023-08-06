@@ -1,5 +1,5 @@
 use std::{
-    io::{stdout, BufRead, Write},
+    io::{stdout, BufRead},
     sync::mpsc::{channel, Receiver, Sender},
     thread,
     time::Duration,
@@ -37,7 +37,7 @@ fn read_from_stdin(tx: Sender<Droplet>) {
     for line in reader.lines() {
         let x_pos = rng.gen_range(0..col);
         let y_pos = rng.gen_range(0..lowest_draw);
-        let text = format!("{}", line.unwrap());
+        let text = line.unwrap().to_string();
         let length = text.len();
         if length == 0 {
             continue;
@@ -90,7 +90,14 @@ fn write_to_terminal(rx: Receiver<Droplet>) -> anyhow::Result<()> {
                 let (letter, colour) = match (Status::get(index, droplet.current_char), final_char)
                 {
                     (_, true) => (' ', Color::Green),
-                    (Status::Normal, false) => (char, Color::Rgb { r: 0, g: droplet.shade, b: 0 }),
+                    (Status::Normal, false) => (
+                        char,
+                        Color::Rgb {
+                            r: 0,
+                            g: droplet.shade,
+                            b: 0,
+                        },
+                    ),
                     (Status::ToErase, false) => (' ', Color::Green),
                     (Status::TooEarly, false) => break, //(char, Color::Blue),
                     (Status::Stale, false) => continue, //(char, Color::Yellow),
@@ -149,6 +156,7 @@ impl Status {
 #[cfg(test)]
 mod test {
     use super::*;
+    use std::io::Write;
 
     /// Generates a few lines to pass to the operator app. Use as follows:
     /// ```

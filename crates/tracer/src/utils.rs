@@ -1,5 +1,3 @@
-use std::hash;
-
 use archors_types::alias::{SszH256, SszU256, SszU64};
 use ethers::types::transaction::eip2930::AccessList;
 use hex::FromHexError;

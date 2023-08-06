@@ -2,7 +2,7 @@
 name = "archors_interpret"
 version = "0.1.0"
 edition = "2021"
-definition = "Create a readable summary of an EIP-3155 Ethereum transaction trace"
+description = "Create a readable summary of an EIP-3155 Ethereum transaction trace"
 
 [dependencies]
 alloy-primitives = "0.2.0"
