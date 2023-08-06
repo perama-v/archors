@@ -45,7 +45,7 @@ fn read_from_stdin(tx: Sender<Droplet>) {
         let droplet = Droplet {
             text,
             length,
-            shade: 10,
+            shade: rng.gen_range(20..255),
             x_pos,
             y_pos,
             current_char: 0,
@@ -90,7 +90,7 @@ fn write_to_terminal(rx: Receiver<Droplet>) -> anyhow::Result<()> {
                 let (letter, colour) = match (Status::get(index, droplet.current_char), final_char)
                 {
                     (_, true) => (' ', Color::Green),
-                    (Status::Normal, false) => (char, Color::Green),
+                    (Status::Normal, false) => (char, Color::Rgb { r: 0, g: droplet.shade, b: 0 }),
                     (Status::ToErase, false) => (' ', Color::Green),
                     (Status::TooEarly, false) => break, //(char, Color::Blue),
                     (Status::Stale, false) => continue, //(char, Color::Yellow),

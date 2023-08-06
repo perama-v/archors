@@ -5,8 +5,8 @@ pub struct Droplet {
     pub text: String,
     /// Length of string
     pub length: usize,
-    /// Greyscale (fades further within a   group)
-    pub shade: usize,
+    /// Greyscale (fades further within a group)
+    pub shade: u8,
     /// Col
     pub x_pos: u16,
     /// Row
