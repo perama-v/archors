@@ -5,6 +5,8 @@ use std::{
     time::Duration,
 };
 
+use clap::Parser;
+use cli::AppArgs;
 use crossterm::{
     cursor::{self, Hide},
     style::{Color, Print, SetForegroundColor},
@@ -13,31 +15,29 @@ use crossterm::{
 use droplet::Droplet;
 use rand::Rng;
 
+mod cli;
 mod droplet;
 
 fn main() {
-    begin().expect("App could not be run.");
-}
-
-fn begin() -> anyhow::Result<()> {
+    let args = AppArgs::parse();
     let (tx, rx) = channel::<Droplet>();
     thread::spawn(move || read_from_stdin(tx));
-    write_to_terminal(rx)?;
-    Ok(())
+    write_to_terminal(rx, args.delay).expect("App could not be run.");
 }
 
 /// Reads lines from terminal, and sends them in a channel as Droplet.
-fn read_from_stdin(tx: Sender<Droplet>) {
+fn read_from_stdin(tx: Sender<Droplet>) -> anyhow::Result<()> {
     let stdin = std::io::stdin();
     let reader = stdin.lock();
     let mut rng = rand::thread_rng();
-    let (col, row) = terminal::size().unwrap();
+    let (col, row) = terminal::size()?;
     let lowest_draw = row / 3;
 
     for line in reader.lines() {
         let x_pos = rng.gen_range(0..col);
         let y_pos = rng.gen_range(0..lowest_draw);
-        let text = line.unwrap().to_string();
+        let mut text = line?.to_string();
+        text.push_str("             ");
         let length = text.len();
         if length == 0 {
             continue;
@@ -50,16 +50,17 @@ fn read_from_stdin(tx: Sender<Droplet>) {
             y_pos,
             current_char: 0,
         };
-        tx.send(droplet).unwrap();
+        tx.send(droplet)?;
     }
+    Ok(())
 }
 
 /// Recevies Droplets in a channel and displays them in the terminal.
-fn write_to_terminal(rx: Receiver<Droplet>) -> anyhow::Result<()> {
+fn write_to_terminal(rx: Receiver<Droplet>, delay: u64) -> anyhow::Result<()> {
     let mut stdout = stdout();
     stdout.execute(terminal::Clear(terminal::ClearType::All))?;
     stdout.execute(Hide)?;
-    let (_, max_height) = terminal::size().unwrap();
+    let (_, max_height) = terminal::size()?;
 
     let mut started = false;
     let mut droplets: Vec<Droplet> = vec![];
@@ -90,7 +91,7 @@ fn write_to_terminal(rx: Receiver<Droplet>) -> anyhow::Result<()> {
                 let (letter, colour) = match (Status::get(index, droplet.current_char), final_char)
                 {
                     (_, true) => (' ', Color::Green),
-                    (Status::Normal, false) => (
+                    (Status::NormalUndrawn, false) => (
                         char,
                         Color::Rgb {
                             r: 0,
@@ -98,10 +99,18 @@ fn write_to_terminal(rx: Receiver<Droplet>) -> anyhow::Result<()> {
                             b: 0,
                         },
                     ),
+                    (Status::NormalDrawn, false) => continue,
                     (Status::ToErase, false) => (' ', Color::Green),
-                    (Status::TooEarly, false) => break, //(char, Color::Blue),
-                    (Status::Stale, false) => continue, //(char, Color::Yellow),
-                    (Status::Brightest, false) => (char, Color::White),
+                    (Status::TooEarly, false) => break,
+                    (Status::Stale, false) => continue,
+                    (Status::Brightest, false) => (
+                        char,
+                        Color::Rgb {
+                            r: droplet.shade,
+                            g: droplet.shade,
+                            b: droplet.shade,
+                        },
+                    ),
                 };
                 let y_pos_abs = droplet.y_pos + index as u16;
                 let y_pos = match y_pos_abs >= max_height {
@@ -116,7 +125,7 @@ fn write_to_terminal(rx: Receiver<Droplet>) -> anyhow::Result<()> {
                     .execute(Print(letter))
                     .unwrap();
             }
-            thread::sleep(Duration::from_millis(1));
+            thread::sleep(Duration::from_millis(delay));
             // Update droplet draw position and remove if finished.
             droplet.current_char += 1;
             // If droplet is not at end, retain droplet.
@@ -131,12 +140,21 @@ fn write_to_terminal(rx: Receiver<Droplet>) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Every droplet is visited multiple times. Each time, characters have
+/// a status, relative to the phase of the droplet.
 pub enum Status {
-    Normal,
-    Stale,
+    /// Char is not yet ready to be drawn for this droplet, nothing to be done
     TooEarly,
-    ToErase,
+    /// White chars
     Brightest,
+    /// Needs to be drawn in normal colour
+    NormalUndrawn,
+    /// Has been drawn, nothing to be done
+    NormalDrawn,
+    /// Has been drawn, now ready to erase
+    ToErase,
+    /// Has been erased, now is far in the past, nothing to be done
+    Stale,
 }
 
 impl Status {
@@ -145,7 +163,8 @@ impl Status {
         let after = char_index > draw_index;
         match (after, diff) {
             (false, 0 | 1 | 2) => Status::Brightest,
-            (false, 3..=40) => Status::Normal,
+            (false, 3) => Status::NormalUndrawn,
+            (false, 4..=40) => Status::NormalDrawn,
             (false, 41) => Status::ToErase,
             (false, _) => Status::Stale,
             (true, _) => Status::TooEarly,
@@ -155,7 +174,6 @@ impl Status {
 
 #[cfg(test)]
 mod test {
-    use super::*;
     use std::io::Write;
 
     /// Generates a few lines to pass to the operator app. Use as follows:
