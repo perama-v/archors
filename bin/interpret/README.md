@@ -7,13 +7,12 @@ The output is readable so one can see what the transaction did.
 
 The function is pure in that only the transaction trace is used
 
+```command
+cargo run --release -p archors_interpret -- --help
+```
 ## Flags
 
 The interpreter may be passed different trace styles, as long as they are NDJSON.
-
-### EIP-3155
-
-This will be NDJSON by default. No flag is required for this style
 
 ### `debug_traceTransaction` and `debug_traceBlockByNumber`
 
@@ -26,8 +25,18 @@ For example:
 ```
 curl -X POST -H "Content-Type: application/json" --data '{"jsonrpc": "2.0", "method": "debug_traceTransaction", "params": ["0x8f5dd8107e2efce82759c9bbf34ac7bab49a2992b2f2ee6fc9d510f5e2490680", {"disableMemory": true}], "id":1}' http://127.0.0.1:8545 \
     | jq '.["result"]["structLogs"][]' -c \
-    | cargo run --release -p archors_interpret --debug
+    | cargo run --release -p archors_interpret
 ```
+
+### EIP-3155
+
+This will be NDJSON by default. The `eip3155` flag is required for this style.
+
+This command gets a trace then interprets it.
+```command
+cargo run --release --example 09_use_proof | cargo run --release -p archors_interpret eip3155
+```
+
 ## Examples
 
 ### Multiple contract creations

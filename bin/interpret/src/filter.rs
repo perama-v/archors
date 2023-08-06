@@ -14,6 +14,7 @@ use std::io::{BufRead, Write};
 use thiserror::Error;
 
 use crate::{
+    cli::ModeFlag,
     context::{apply_pending_context, get_pending_context_update, Context, ContextUpdate},
     juncture::Juncture,
     opcode::{EvmOutput, EvmStep, EvmStepDebug, EvmStepEip3155, TraceLine},
@@ -26,15 +27,7 @@ pub enum FilterError {
     SerdeJson(#[from] serde_json::Error),
 }
 
-pub enum ModeFlag {
-    Eip3155,
-    /// For debug_traceBlockByNumber or debug_traceTransaction
-    Debug,
-}
-
-pub fn process_trace() {
-    let trace_style = ModeFlag::Debug;
-
+pub fn process_trace(trace_style: ModeFlag) {
     let stdin = std::io::stdin();
     let reader = stdin.lock();
 
