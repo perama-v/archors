@@ -1,6 +1,10 @@
 use std::{
-    io::{stdout, BufRead},
-    sync::mpsc::{channel, Receiver, Sender},
+    io::BufRead,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc::{channel, Receiver, Sender},
+        Arc,
+    },
     thread,
     time::Duration,
 };
@@ -8,10 +12,11 @@ use std::{
 use clap::Parser;
 use cli::AppArgs;
 use crossterm::{
-    cursor::{self, Hide},
+    cursor::{self},
     style::{Color, Print, SetForegroundColor},
     terminal, ExecutableCommand,
 };
+use ctrlc::set_handler;
 use droplet::Droplet;
 use rand::Rng;
 
@@ -57,30 +62,33 @@ fn read_from_stdin(tx: Sender<Droplet>) -> anyhow::Result<()> {
 
 /// Recevies Droplets in a channel and displays them in the terminal.
 fn write_to_terminal(rx: Receiver<Droplet>, delay: u64) -> anyhow::Result<()> {
-    let mut stdout = stdout();
-    stdout.execute(terminal::Clear(terminal::ClearType::All))?;
-    stdout.execute(Hide)?;
+    let mut stdout = std::io::stdout();
+    stdout.execute(terminal::EnterAlternateScreen)?;
+    stdout.execute(cursor::Hide)?;
     let (_, max_height) = terminal::size()?;
 
-    let mut started = false;
     let mut droplets: Vec<Droplet> = vec![];
+
+    // Set up Ctrl+C signal handler
+    let running = Arc::new(AtomicBool::new(true));
+    let r = running.clone();
+    set_handler(move || {
+        r.store(false, Ordering::SeqCst);
+    })
+    .expect("Error setting Ctrl+C handler");
 
     // Accept new droplets as they arrive.
     // Hold droplets until they are finished.
     // Draw all held droplets at the same time.
-    loop {
+    while running.load(Ordering::SeqCst) {
         match rx.recv() {
             Ok(droplet) => droplets.push(droplet),
             Err(_) => {
                 if droplets.is_empty() {
-                    thread::sleep(Duration::from_millis(100));
+                    thread::sleep(Duration::from_millis(10));
                     continue;
                 }
             }
-        }
-        if !started {
-            stdout.execute(terminal::Clear(terminal::ClearType::All))?;
-            started = true;
         }
 
         // Draw droplets
@@ -125,7 +133,7 @@ fn write_to_terminal(rx: Receiver<Droplet>, delay: u64) -> anyhow::Result<()> {
                     .execute(Print(letter))
                     .unwrap();
             }
-            thread::sleep(Duration::from_millis(delay));
+            thread::sleep(Duration::from_micros(delay));
             // Update droplet draw position and remove if finished.
             droplet.current_char += 1;
             // If droplet is not at end, retain droplet.
@@ -135,6 +143,7 @@ fn write_to_terminal(rx: Receiver<Droplet>, delay: u64) -> anyhow::Result<()> {
             break;
         }
     }
+    stdout.execute(terminal::LeaveAlternateScreen)?;
     stdout.execute(terminal::Clear(terminal::ClearType::All))?;
     stdout.execute(cursor::Show)?;
     Ok(())
@@ -178,12 +187,17 @@ mod test {
 
     /// Generates a few lines to pass to the operator app. Use as follows:
     /// ```
-    /// cargo test -p archors_operator --  std | cargo run -p archors_operator
+    /// cargo -q test -p archors_operator -- std | cargo run -p archors_operator
+    /// ```
+    /// Repeater:
+    /// ```
+    /// for i in {1..3}; do cargo test -p archors_operator -- std; sleep 1; done | cargo run -p archors_operator
+    /// while true; do cargo test -q -p archors_operator --  std; done | cargo run -q -p archors_operator
     /// ```
     #[test]
     fn test_write_to_std_out() {
         let mut stdout = Box::new(std::io::stdout());
-        for line in 0..10 {
+        for line in 0..100 {
             writeln!(stdout, "Line abcde 123456789  {}", line).unwrap();
         }
     }
