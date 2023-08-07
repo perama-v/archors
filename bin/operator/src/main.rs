@@ -13,8 +13,7 @@ use clap::Parser;
 use cli::AppArgs;
 use crossterm::{
     cursor::{self},
-    style::{Color, Print, SetForegroundColor},
-    terminal, ExecutableCommand, QueueableCommand,
+    terminal, ExecutableCommand,
 };
 use ctrlc::set_handler;
 use droplet::Droplet;
@@ -93,27 +92,14 @@ fn write_to_terminal(rx: Receiver<Droplet>, delay: u64) -> anyhow::Result<()> {
 
         // Draw droplets
         droplets.retain_mut(|droplet| {
-
-            let retain_droplet = !droplet.is_final_char();
-            for (index, char) in droplet.text.char_indices() {
-                match droplet.get_draw_info(char, index, max_height) {
-                    droplet::DrawInfo::DrawChar { letter, colour, x, y } => {
-                        stdout
-                            .queue(SetForegroundColor(colour))
-                            .unwrap()
-                            .queue(cursor::MoveTo(x,y))
-                            .unwrap()
-                            .queue(Print(letter))
-                            .unwrap();
-                    }
-                    droplet::DrawInfo::IgnoreChar => continue,
-                    droplet::DrawInfo::EndDroplet => break,
-                };
-            }
+            droplet
+                .draw_droplet(max_height)
+                .expect("Couldn't draw droplet.");
             // All droplets have been queued, draw them.
             stdout.flush().expect("Could not flush stdout");
             thread::sleep(Duration::from_micros(delay));
-            // Update droplet draw position and remove if finished.
+            // Get retention info prior to updating status.
+            let retain_droplet = !droplet.is_final_char();
             droplet.current_char += 1;
             retain_droplet
         });
@@ -127,40 +113,6 @@ fn write_to_terminal(rx: Receiver<Droplet>, delay: u64) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Every droplet is visited multiple times. Each time, characters have
-/// a status, relative to the phase of the droplet.
-pub enum Status {
-    /// Char is not yet ready to be drawn for this droplet, nothing to be done
-    TooEarly,
-    /// White char, needs to be drawn
-    BrightestUndrawn,
-    /// White char, has been drawn, nothing to be done.
-    BrightestDrawn,
-    /// Needs to be drawn in normal colour
-    NormalUndrawn,
-    /// Has been drawn, nothing to be done
-    NormalDrawn,
-    /// Has been drawn, now ready to erase
-    ToErase,
-    /// Has been erased, now is far in the past, nothing to be done
-    Stale,
-}
-
-impl Status {
-    fn get(char_index: usize, draw_index: usize) -> Self {
-        let diff = char_index.abs_diff(draw_index);
-        let after = char_index > draw_index;
-        match (after, diff) {
-            (false, 0) => Status::BrightestUndrawn,
-            (false, 1 | 2) => Status::BrightestDrawn,
-            (false, 3) => Status::NormalUndrawn,
-            (false, 4..=40) => Status::NormalDrawn,
-            (false, 41) => Status::ToErase,
-            (false, _) => Status::Stale,
-            (true, _) => Status::TooEarly,
-        }
-    }
-}
 
 #[cfg(test)]
 mod test {
