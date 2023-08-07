@@ -102,7 +102,13 @@ pub fn process_trace(trace_style: ModeFlag) {
         let juncture = Juncture::create(&processed, &unprocessed_step, &context, tx_count);
         //juncture.print_json();
         //juncture.print_pretty();
-        writeln!(stdout, "{}", juncture).expect("Could not write to stdout");
+        match writeln!(stdout, "{}", juncture) {
+            Ok(_) => {}
+            Err(_) => {
+                // Could not write to stdout
+                break;
+            }
+        }
     }
 }
 

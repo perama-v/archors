@@ -111,7 +111,8 @@ fn write_to_terminal(rx: Receiver<Droplet>, delay: u64) -> anyhow::Result<()> {
                     (Status::ToErase, false) => (' ', Color::Green),
                     (Status::TooEarly, false) => break,
                     (Status::Stale, false) => continue,
-                    (Status::Brightest, false) => (
+                    (Status::BrightestDrawn, false) => continue,
+                    (Status::BrightestUndrawn, false) => (
                         char,
                         Color::Rgb {
                             r: droplet.shade,
@@ -154,8 +155,10 @@ fn write_to_terminal(rx: Receiver<Droplet>, delay: u64) -> anyhow::Result<()> {
 pub enum Status {
     /// Char is not yet ready to be drawn for this droplet, nothing to be done
     TooEarly,
-    /// White chars
-    Brightest,
+    /// White char, needs to be drawn
+    BrightestUndrawn,
+    /// White char, has been drawn, nothing to be done.
+    BrightestDrawn,
     /// Needs to be drawn in normal colour
     NormalUndrawn,
     /// Has been drawn, nothing to be done
@@ -171,7 +174,8 @@ impl Status {
         let diff = char_index.abs_diff(draw_index);
         let after = char_index > draw_index;
         match (after, diff) {
-            (false, 0 | 1 | 2) => Status::Brightest,
+            (false, 0) => Status::BrightestUndrawn,
+            (false, 1 | 2) => Status::BrightestDrawn,
             (false, 3) => Status::NormalUndrawn,
             (false, 4..=40) => Status::NormalDrawn,
             (false, 41) => Status::ToErase,

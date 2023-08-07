@@ -6,6 +6,6 @@ use clap::Parser;
 #[command(author, version, about, long_about = None)]
 pub struct AppArgs {
     /// Delay between drawing each droplet, in microseconds
-    #[clap(short, long, default_value_t = 200)]
+    #[clap(short, long, default_value_t = 2000)]
     pub delay: u64,
 }
