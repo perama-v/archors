@@ -1,5 +1,5 @@
 use std::{
-    io::BufRead,
+    io::{BufRead, Write},
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc::{channel, Receiver, Sender},
@@ -14,7 +14,7 @@ use cli::AppArgs;
 use crossterm::{
     cursor::{self},
     style::{Color, Print, SetForegroundColor},
-    terminal, ExecutableCommand,
+    terminal, ExecutableCommand, QueueableCommand,
 };
 use ctrlc::set_handler;
 use droplet::Droplet;
@@ -127,13 +127,15 @@ fn write_to_terminal(rx: Receiver<Droplet>, delay: u64) -> anyhow::Result<()> {
                     false => y_pos_abs,
                 };
                 stdout
-                    .execute(SetForegroundColor(colour))
+                    .queue(SetForegroundColor(colour))
                     .unwrap()
-                    .execute(cursor::MoveTo(droplet.x_pos, y_pos))
+                    .queue(cursor::MoveTo(droplet.x_pos, y_pos))
                     .unwrap()
-                    .execute(Print(letter))
+                    .queue(Print(letter))
                     .unwrap();
             }
+            // All droplets have been queued, draw them.
+            stdout.flush().expect("Could not flush stdout");
             thread::sleep(Duration::from_micros(delay));
             // Update droplet draw position and remove if finished.
             droplet.current_char += 1;
