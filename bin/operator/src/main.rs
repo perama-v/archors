@@ -93,54 +93,29 @@ fn write_to_terminal(rx: Receiver<Droplet>, delay: u64) -> anyhow::Result<()> {
 
         // Draw droplets
         droplets.retain_mut(|droplet| {
-            let final_char = droplet.current_char == droplet.length - 1;
 
+            let retain_droplet = !droplet.is_final_char();
             for (index, char) in droplet.text.char_indices() {
-                let (letter, colour) = match (Status::get(index, droplet.current_char), final_char)
-                {
-                    (_, true) => (' ', Color::Green),
-                    (Status::NormalUndrawn, false) => (
-                        char,
-                        Color::Rgb {
-                            r: 0,
-                            g: droplet.shade,
-                            b: 0,
-                        },
-                    ),
-                    (Status::NormalDrawn, false) => continue,
-                    (Status::ToErase, false) => (' ', Color::Green),
-                    (Status::TooEarly, false) => break,
-                    (Status::Stale, false) => continue,
-                    (Status::BrightestDrawn, false) => continue,
-                    (Status::BrightestUndrawn, false) => (
-                        char,
-                        Color::Rgb {
-                            r: droplet.shade,
-                            g: droplet.shade,
-                            b: droplet.shade,
-                        },
-                    ),
+                match droplet.get_draw_info(char, index, max_height) {
+                    droplet::DrawInfo::DrawChar { letter, colour, x, y } => {
+                        stdout
+                            .queue(SetForegroundColor(colour))
+                            .unwrap()
+                            .queue(cursor::MoveTo(x,y))
+                            .unwrap()
+                            .queue(Print(letter))
+                            .unwrap();
+                    }
+                    droplet::DrawInfo::IgnoreChar => continue,
+                    droplet::DrawInfo::EndDroplet => break,
                 };
-                let y_pos_abs = droplet.y_pos + index as u16;
-                let y_pos = match y_pos_abs >= max_height {
-                    true => y_pos_abs.wrapping_rem(max_height),
-                    false => y_pos_abs,
-                };
-                stdout
-                    .queue(SetForegroundColor(colour))
-                    .unwrap()
-                    .queue(cursor::MoveTo(droplet.x_pos, y_pos))
-                    .unwrap()
-                    .queue(Print(letter))
-                    .unwrap();
             }
             // All droplets have been queued, draw them.
             stdout.flush().expect("Could not flush stdout");
             thread::sleep(Duration::from_micros(delay));
             // Update droplet draw position and remove if finished.
             droplet.current_char += 1;
-            // If droplet is not at end, retain droplet.
-            !final_char
+            retain_droplet
         });
         if droplets.is_empty() {
             break;
