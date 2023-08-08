@@ -68,7 +68,7 @@ In the example below, revm executes a block producing an EIP3155 trace, which is
 filtered and interpreted. That is then passed to operator to display.
 
 ```command
-cargo run -qr --example 09_use_proof | cargo run -qr -p archors_interpret 3155 | cargo run -qr -p archors_operator
+cargo run -qr --example 09_use_proof | cargo run -qr -p archors_interpret eip3155 | cargo run -qr -p archors_operator
 ```
 Or for the raw trace:
 ```command
