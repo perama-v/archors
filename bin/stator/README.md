@@ -34,3 +34,18 @@ A full working example of using a proof to run revm can be seen in:
 - [../../examples](../../examples/09_use_proof.rs) library examples showing generation of a raw trace
 - [../interpret](../interpret/README.md) binary for parsed trace
 - [../operator](../operator/README.md) binary for a visual representation of a parsed trace
+
+### Example
+To create hex-string file containing the RequiredBlockState for block 17190873.
+```command
+RUST_LOG=info cargo run --release -p archors_stator -- -b 17190873
+```
+A file is created, containing the following (truncated) text. This is ssz-snappy encoded
+data that can be used to re-execute that block.
+```
+0xff060000734e6150705900b07d007316...f5f2490ff2ae79390000000001064fd8
+```
+### Running time
+The application calls `eth_getProof` a number of times (one per account accessed in that block).
+This can amount to hundreds of calls. Logging (`RUST_LOG=info cargo run  ...`) will
+show the stages of completion, including how many `eth_getProof` calls are being made.

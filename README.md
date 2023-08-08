@@ -7,15 +7,19 @@ The data specified here is both necesessary and sufficient for tracing an Ethere
 - Data spec: [./spec/required_block_state_format.md](spec/required_block_state_format.md)
 - Network spec: [./spec/required_block_state_subprotocol.md](./spec/required_block_state_subprotocol.md)
 - Library example: [./examples/10_cache_required_state.rs](./examples/10_cache_required_state.rs)
+- `eth_getRequiredBlockState` test case generator CLI app: [bin/stator/README.md](bin/stator/README.md)
 
 ## Table of Contents
-
 - [archors](#archors)
   - [Table of Contents](#table-of-contents)
   - [Why](#why)
   - [Research questions](#research-questions)
   - [Status](#status)
   - [Modes](#modes)
+    - [Libraries](#libraries)
+    - [Binary: Interpret](#binary-interpret)
+    - [Binary: Operator](#binary-operator)
+    - [Binary: Stator](#binary-stator)
   - [Use case](#use-case)
   - [Requirements](#requirements)
   - [State proof viz](#state-proof-viz)
@@ -34,7 +38,6 @@ The data specified here is both necesessary and sufficient for tracing an Ethere
   - [Data expansion](#data-expansion)
   - [Future considerations - Beacon root](#future-considerations---beacon-root)
   - [Future considerations - BLOBHASH](#future-considerations---blobhash)
-
 
 ## Why
 
@@ -107,6 +110,17 @@ This command gets a trace, interprets it, then displays it.
 cargo run --release --example 09_use_proof \
     | cargo run --release -p archors_interpret \
     | cargo run --release -p archors_operator
+```
+
+### Binary: Stator
+
+Generates test cases for `eth_getRequiredBlockState`
+
+This command gets a block number, calls a node to get the required information
+and then produces a file containing the spec-compliant `RequiredBlockState`.
+That file is then sufficient to trace a block (from `eth_getBlockByNumber` with transactions)
+```command
+RUST_LOG=info cargo run -r -p archors_stator -- -b 17190873
 ```
 
 ## Use case

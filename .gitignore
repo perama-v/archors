@@ -13,6 +13,9 @@ Cargo.lock
 # trace demo
 /data/blocks/1753*
 
+# stator demo
+/data/blocks/17869*
+
 notes.md
 
 debug_data/
