@@ -83,14 +83,14 @@ pub async fn store_block_with_transactions(url: &str, target_block: u64) -> Resu
     Ok(())
 }
 
-/// Retrieves and stores required state for a particular cached block.
+/// Retrieves required state for a particular cached block.
 ///
 /// Creates a transferrable state parcel without the creation of intermediate cache files.
-pub async fn store_required_state(
+pub async fn fetch_required_block_state(
     url: &str,
     get_proof_url: &str,
     target_block: u64,
-) -> Result<(), CacheError> {
+) -> Result<RequiredBlockState, CacheError> {
     // Prestate-trace the block. Then deduplicate. Then getProof for prior block.
     let tx_prestates = request_prestate_tracer(url, target_block).await?;
     let accesses = BlockStateAccesses::from_prestate_accesses(tx_prestates);
@@ -101,7 +101,19 @@ pub async fn store_required_state(
     // Trace (no-memory) the block. Then filter for BLOCKHASH opcode.
     let blockhashes = fetch_blockhashes(url, target_block).await?;
 
-    let data = state_from_parts(proofs, contracts, blockhashes)?;
+    let required_block_state = state_from_parts(proofs, contracts, blockhashes)?;
+    Ok(required_block_state)
+}
+
+/// Retrieves and stores required state for a particular cached block.
+///
+/// Creates a transferrable state parcel without the creation of intermediate cache files.
+pub async fn store_required_state(
+    url: &str,
+    get_proof_url: &str,
+    target_block: u64,
+) -> Result<(), CacheError> {
+    let data = fetch_required_block_state(url, get_proof_url, target_block).await?;
     save_transferrable_data(target_block, data)?;
     Ok(())
 }

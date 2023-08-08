@@ -19,7 +19,7 @@ Leave that terminal and open a separate terminal, the operator can be run there.
 ### Flags
 See flags here:
 ```command
-cargo run -qr -p archors_operator -- --help
+cargo run --release -p archors_operator -- --help
 ```
 
 ### `debug_traceBlockByNumber` and `debug_traceBlockByNumber`

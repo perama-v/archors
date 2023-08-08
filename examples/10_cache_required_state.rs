@@ -12,8 +12,8 @@ use archors_tracer::trace::BlockExecutor;
 /// peer who can use it to trustlessly trace an historical Ethereum block.
 ///
 /// Involves:
-/// - eth_traceBlock for state accesses
-/// - eth_traceBlock for blockhash use
+/// - debug_traceBlock for state accesses
+/// - debug_traceBlock for blockhash use
 /// - eth_getProof for proof of historical state
 #[tokio::main]
 async fn main() -> Result<()> {
