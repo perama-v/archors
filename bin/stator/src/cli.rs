@@ -8,9 +8,9 @@ pub const LOCALHOST: &str = "http://127.0.0.1:8545/";
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 pub struct AppArgs {
-    /// File to create. E.g., <filename>.txt / <filename>.ssz_snappy
-    #[clap(short, long, default_value_t = String::from("test_data"))]
-    pub filename: String,
+    /// File to create. E.g., <prefix>_<block_number>.txt / <prefix>_<block_number>.ssz_snappy
+    #[clap(short, long, default_value_t = String::from("required_block_state"))]
+    pub filename_prefix: String,
     /// Kind of data to write to file.
     #[clap(value_enum, default_value_t=OutputKind::HexString)]
     pub output: OutputKind,
