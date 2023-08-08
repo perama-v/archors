@@ -20,7 +20,7 @@ use archors_types::state::{
     BlockHashes, CompactEip1186Proof, CompactEip1186Proofs, CompactStorageProof,
     CompactStorageProofs, Contract, Contracts, NodeIndices, RecentBlockHash, RequiredBlockState,
 };
-use ethers::types::{EIP1186ProofResponse, H160, H256, U64};
+use ethers::types::{EIP1186ProofResponse, StorageProof, H160, H256, U64};
 use ssz_rs::prelude::*;
 use thiserror::Error;
 
@@ -101,22 +101,7 @@ fn get_compact_eip1186_proofs(
         // Account
         let account_indices = nodes_to_node_indices(proof.1.account_proof, &node_set.account)?;
         // Storage
-
-        // Sort storage proofs by key
-        let mut storage_proofs = proof.1.storage_proof;
-        storage_proofs.sort_by_key(|x| x.key);
-
-        let mut compact_storage_proofs = CompactStorageProofs::default();
-        for storage_proof in storage_proofs {
-            let storage_indices = nodes_to_node_indices(storage_proof.proof, &node_set.storage)?;
-            // key, value
-            let compact_storage_proof = CompactStorageProof {
-                key: h256_to_ssz_h256(storage_proof.key)?,
-                value: u256_to_ssz_u256(storage_proof.value),
-                proof: storage_indices,
-            };
-            compact_storage_proofs.push(compact_storage_proof);
-        }
+        let storage_proofs = get_compact_storage_proofs(node_set, proof.1.storage_proof)?;
 
         let ssz_eip1186_proof = CompactEip1186Proof {
             address: h160_to_ssz_h160(proof.1.address)?,
@@ -125,12 +110,37 @@ fn get_compact_eip1186_proofs(
             nonce: u64_to_ssz_u64(proof.1.nonce),
             storage_hash: h256_to_ssz_h256(proof.1.storage_hash)?,
             account_proof: account_indices,
-            storage_proofs: compact_storage_proofs,
+            storage_proofs,
         };
         ssz_eip1186_proofs.push(ssz_eip1186_proof);
     }
 
     Ok(ssz_eip1186_proofs)
+}
+
+/// Replace every storage proof node with a reference to the index in a list.
+///
+/// Results are sorted by key.
+fn get_compact_storage_proofs(
+    node_set: &TrieNodesIndices,
+    storage_proofs: Vec<StorageProof>,
+) -> Result<CompactStorageProofs, TransferrableError> {
+    // Sort storage proofs by key
+    let mut storage_proofs = storage_proofs;
+    storage_proofs.sort_by_key(|x| x.key);
+
+    let mut compact_storage_proofs = CompactStorageProofs::default();
+    for storage_proof in storage_proofs {
+        let storage_indices = nodes_to_node_indices(storage_proof.proof, &node_set.storage)?;
+        // key, value
+        let compact_storage_proof = CompactStorageProof {
+            key: h256_to_ssz_h256(storage_proof.key)?,
+            value: u256_to_ssz_u256(storage_proof.value),
+            proof: storage_indices,
+        };
+        compact_storage_proofs.push(compact_storage_proof);
+    }
+    Ok(compact_storage_proofs)
 }
 
 /// Turns a list of nodes in to a list of indices. The indices
@@ -154,10 +164,10 @@ fn nodes_to_node_indices(
     Ok(indices)
 }
 
-/// Holds all node set present in a block state proof. Used to construct
+/// Holds all nodes present in a block state proof. Used to construct
 /// deduplicated compact proof.
 ///
-/// Members are sorted.
+/// Account and storage nodes are separate. Members are sorted.
 #[derive(Clone)]
 struct TrieNodesSet {
     /// Account nodes, lexicographically sorted ([0xa.., 0xb..])
