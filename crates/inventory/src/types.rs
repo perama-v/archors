@@ -34,8 +34,10 @@ impl BlockHashAccesses {
         }
         map
     }
-    pub fn to_unique_pairs(self) -> Vec<(U64, H256)> {
-        self.to_hashmap().into_iter().collect()
+    pub fn to_unique_pairs_sorted(self) -> Vec<(U64, H256)> {
+        let mut pairs: Vec<(U64, H256)> = self.to_hashmap().into_iter().collect();
+        pairs.sort();
+        pairs
     }
 }
 

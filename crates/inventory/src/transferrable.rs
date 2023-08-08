@@ -50,7 +50,7 @@ pub enum TransferrableError {
 /// Creates a compact proof by separating trie nodes and contract code from the proof data.
 pub fn state_from_parts(
     block_proofs: BlockProofs,
-    accessed_contracts: Vec<ContractBytes>,
+    accessed_contracts_sorted: Vec<ContractBytes>,
     accessed_blockhashes: BlockHashAccesses,
 ) -> Result<RequiredBlockState, TransferrableError> {
     let node_set = get_trie_node_set(&block_proofs.proofs);
@@ -59,10 +59,10 @@ pub fn state_from_parts(
 
     let proof = RequiredBlockState {
         compact_eip1186_proofs: get_compact_eip1186_proofs(&node_map, block_proofs)?,
-        contracts: contracts_to_ssz(accessed_contracts),
+        contracts: contracts_to_ssz(accessed_contracts_sorted),
         account_nodes: bytes_collection_to_ssz(node_set.account),
         storage_nodes: bytes_collection_to_ssz(node_set.storage),
-        blockhashes: blockhashes_to_ssz(accessed_blockhashes.to_unique_pairs())?,
+        blockhashes: blockhashes_to_ssz(accessed_blockhashes.to_unique_pairs_sorted())?,
     };
     Ok(proof)
 }
@@ -82,18 +82,32 @@ fn get_node_map(node_set: TrieNodesSet) -> TrieNodesIndices {
     TrieNodesIndices { account, storage }
 }
 
-/// Replace every node with a reference to the index in a list.
+/// Replace every account proof node with a reference to the index in a list.
+///
+/// Results are sorted by address. Contains storage proofs, that
+/// are sorted by key.
 fn get_compact_eip1186_proofs(
     node_set: &TrieNodesIndices,
     block_proofs: BlockProofs,
 ) -> Result<CompactEip1186Proofs, TransferrableError> {
+    let mut block_proofs: Vec<(H160, EIP1186ProofResponse)> =
+        block_proofs.proofs.into_iter().collect();
+    // Sort account proofs by address
+    block_proofs.sort_by_key(|x| x.0);
+
     let mut ssz_eip1186_proofs = CompactEip1186Proofs::default();
-    for proof in block_proofs.proofs {
+
+    for proof in block_proofs {
         // Account
         let account_indices = nodes_to_node_indices(proof.1.account_proof, &node_set.account)?;
         // Storage
+
+        // Sort storage proofs by key
+        let mut storage_proofs = proof.1.storage_proof;
+        storage_proofs.sort_by_key(|x| x.key);
+
         let mut compact_storage_proofs = CompactStorageProofs::default();
-        for storage_proof in proof.1.storage_proof {
+        for storage_proof in storage_proofs {
             let storage_indices = nodes_to_node_indices(storage_proof.proof, &node_set.storage)?;
             // key, value
             let compact_storage_proof = CompactStorageProof {
@@ -115,11 +129,14 @@ fn get_compact_eip1186_proofs(
         };
         ssz_eip1186_proofs.push(ssz_eip1186_proof);
     }
+
     Ok(ssz_eip1186_proofs)
 }
 
 /// Turns a list of nodes in to a list of indices. The indices
-/// come from a mapping.
+/// come from a mapping (node -> index)
+///
+/// The node order is unchanged, and will already be sorted (closest to root = first)
 fn nodes_to_node_indices(
     proof: Vec<ethers::types::Bytes>,
     map: &HashMap<NodeBytes, usize>,
@@ -139,13 +156,17 @@ fn nodes_to_node_indices(
 
 /// Holds all node set present in a block state proof. Used to construct
 /// deduplicated compact proof.
+///
+/// Members are sorted.
 #[derive(Clone)]
 struct TrieNodesSet {
+    /// Account nodes, lexicographically sorted ([0xa.., 0xb..])
     account: Vec<NodeBytes>,
+    /// Sorted nodes, lexicographically sorted (([0xa.., 0xb..]))
     storage: Vec<NodeBytes>,
 }
 
-/// /// Maps node -> index for all nodes present in a block state proof. Used to construct
+/// Maps node -> index for all nodes present in a block state proof. Used to construct
 /// deduplicated compact proof.
 struct TrieNodesIndices {
     account: HashMap<NodeBytes, usize>,
@@ -155,6 +176,8 @@ struct TrieNodesIndices {
 type NodeBytes = Vec<u8>;
 
 /// Finds all trie nodes and uses a HashSet to remove duplicates.
+///
+/// The aggregated account and storage nodes are sorted.
 fn get_trie_node_set(proofs: &HashMap<H160, EIP1186ProofResponse>) -> TrieNodesSet {
     let mut account_set: HashSet<Vec<u8>> = HashSet::default();
     let mut storage_set: HashSet<Vec<u8>> = HashSet::default();
@@ -169,8 +192,10 @@ fn get_trie_node_set(proofs: &HashMap<H160, EIP1186ProofResponse>) -> TrieNodesS
             }
         }
     }
-    let account = account_set.into_iter().collect();
-    let storage = storage_set.into_iter().collect();
+    let mut account: Vec<Vec<u8>> = account_set.into_iter().collect();
+    account.sort();
+    let mut storage: Vec<Vec<u8>> = storage_set.into_iter().collect();
+    storage.sort();
     TrieNodesSet { account, storage }
 }
 

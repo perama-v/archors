@@ -21,7 +21,7 @@ async fn main() -> Result<()> {
     const NODE: &str = "http://127.0.0.1:8545";
     let proof_node =
         std::env::var("GET_PROOF_NODE").expect("Environment variable GET_PROOF_NODE not found");
-    const BLOCK_NUMBER: u64 = 17683184;
+    const BLOCK_NUMBER: u64 = 17190873;
 
     store_block_with_transactions(&NODE, BLOCK_NUMBER).await?;
     store_required_state(&NODE, &proof_node, BLOCK_NUMBER).await?;

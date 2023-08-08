@@ -113,7 +113,6 @@ fn write_to_terminal(rx: Receiver<Droplet>, delay: u64) -> anyhow::Result<()> {
     Ok(())
 }
 
-
 #[cfg(test)]
 mod test {
     use std::io::Write;

@@ -96,11 +96,12 @@ pub async fn store_required_state(
     let accesses = BlockStateAccesses::from_prestate_accesses(tx_prestates);
     let proofs = request_proofs(get_proof_url, &accesses, target_block).await?;
     // Parse from prestate-trace.
-    let contracts = contracts_from_state(accesses)?;
+    let mut contracts: Vec<ContractBytes> = contracts_from_state(accesses)?.into_values().collect();
+    contracts.sort();
     // Trace (no-memory) the block. Then filter for BLOCKHASH opcode.
     let blockhashes = fetch_blockhashes(url, target_block).await?;
 
-    let data = state_from_parts(proofs, contracts.into_values().collect(), blockhashes)?;
+    let data = state_from_parts(proofs, contracts, blockhashes)?;
     save_transferrable_data(target_block, data)?;
     Ok(())
 }
@@ -366,9 +367,10 @@ pub fn compress_proofs(target_block: u64) -> Result<(), CacheError> {
 /// an SSZ+snappy encoded format redy for P2P transfer.
 pub fn create_transferrable_proof(target_block: u64) -> Result<(), CacheError> {
     let proofs = get_proofs_from_cache(target_block)?;
-    let contracts = get_contracts_from_cache(target_block)?
+    let mut contracts: Vec<ContractBytes> = get_contracts_from_cache(target_block)?
         .into_values()
         .collect();
+    contracts.sort();
     let blockhashes = get_blockhashes_from_cache(target_block)?;
 
     let transferrable = state_from_parts(proofs, contracts, blockhashes)?;

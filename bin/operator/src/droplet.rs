@@ -82,7 +82,6 @@ pub enum DrawInfo {
     EndDroplet,
 }
 
-
 /// Every droplet is visited multiple times. Each time, characters have
 /// a status, relative to the phase of the droplet.
 pub enum Status {
