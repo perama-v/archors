@@ -13,6 +13,7 @@ use ethers::{
     utils::keccak256,
 };
 use futures::stream::StreamExt;
+use log::info;
 use reqwest::Client;
 use thiserror::Error;
 use url::{ParseError, Url};
@@ -21,7 +22,7 @@ use crate::{
     rpc::{
         debug_trace_block_default, debug_trace_block_prestate, eth_get_proof, get_block_by_number,
         AccountProofResponse, BlockDefaultTraceResponse, BlockPrestateResponse,
-        BlockPrestateTransactions, BlockResponse,
+        BlockPrestateTransactions, BlockResponse, JsonRpcRequest,
     },
     transferrable::{state_from_parts, TransferrableError},
     types::{BlockHashAccess, BlockHashAccesses, BlockProofs, BlockStateAccesses},
@@ -32,6 +33,11 @@ static CACHE_DIR: &str = "data/blocks";
 
 #[derive(Debug, Error)]
 pub enum CacheError {
+    #[error("Unable to decode JSON-RPC request ({request}) response {source}")]
+    DecodingFailed {
+        source: reqwest::Error,
+        request: JsonRpcRequest,
+    },
     #[error("Block retrieved does not yet have a number")]
     NoBlockNumber,
     #[error("Reqwest error {0}")]
@@ -92,15 +98,21 @@ pub async fn fetch_required_block_state(
     target_block: u64,
 ) -> Result<RequiredBlockState, CacheError> {
     // Prestate-trace the block. Then deduplicate. Then getProof for prior block.
+    info!("1/6 requesting debug_traceBlock with prestate tracer");
     let tx_prestates = request_prestate_tracer(url, target_block).await?;
+    info!("2/6 extracting unique state accesses");
     let accesses = BlockStateAccesses::from_prestate_accesses(tx_prestates);
+    let account_num = accesses.access_data.len();
+    info!("3/6 requesting eth_getProof for accessed states ({account_num} separate calls)");
     let proofs = request_proofs(get_proof_url, &accesses, target_block).await?;
     // Parse from prestate-trace.
+    info!("4/6 extracting contract bytecode from state access response");
     let mut contracts: Vec<ContractBytes> = contracts_from_state(accesses)?.into_values().collect();
     contracts.sort();
     // Trace (no-memory) the block. Then filter for BLOCKHASH opcode.
+    info!("5/6 requesting debug_traceBlock with default trace (for BLOCKHASH opcode)");
     let blockhashes = fetch_blockhashes(url, target_block).await?;
-
+    info!("6/6 constructing RequiredBlockState");
     let required_block_state = state_from_parts(proofs, contracts, blockhashes)?;
     Ok(required_block_state)
 }
@@ -146,14 +158,15 @@ async fn request_prestate_tracer(
 ) -> Result<Vec<BlockPrestateTransactions>, CacheError> {
     let client = Client::new();
     let block_number_hex = format!("0x{:x}", target_block);
-
+    let request = debug_trace_block_prestate(&block_number_hex);
     let response: BlockPrestateResponse = client
         .post(Url::parse(url)?)
-        .json(&debug_trace_block_prestate(&block_number_hex))
+        .json(&request)
         .send()
         .await?
         .json()
-        .await?;
+        .await
+        .map_err(|e| CacheError::DecodingFailed { source: e, request })?;
     Ok(response.result)
 }
 
@@ -308,7 +321,6 @@ async fn request_proofs(
     let mut block_proofs = BlockProofs {
         proofs: HashMap::new(),
     };
-
     let prior_block_number_hex = format!("0x{:x}", target_block - 1);
     for account in accounts_to_prove {
         let proof_request = eth_get_proof(&account, &prior_block_number_hex);
@@ -319,7 +331,11 @@ async fn request_proofs(
             .send()
             .await?
             .json()
-            .await?;
+            .await
+            .map_err(|e| CacheError::DecodingFailed {
+                source: e,
+                request: proof_request,
+            })?;
         block_proofs.proofs.insert(account, response.result);
     }
     Ok(block_proofs)

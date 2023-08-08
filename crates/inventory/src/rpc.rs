@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use ethers::types::{Block, EIP1186ProofResponse, Transaction};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -12,11 +14,17 @@ pub(crate) struct AccountProofResponse {
 }
 
 #[derive(Debug, Serialize)]
-pub(crate) struct JsonRpcRequest {
+pub struct JsonRpcRequest {
     jsonrpc: String,
     method: String,
     params: Vec<Value>,
     id: u64,
+}
+
+impl Display for JsonRpcRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "method: {}, params: {:?}", self.method, self.params)
+    }
 }
 
 #[derive(Deserialize, Serialize)]
