@@ -2,7 +2,7 @@
 name = "archors"
 version = "0.1.0"
 edition = "2021"
-description = "Tool for single Ethereum archival block state proofs"
+description = "Tools for single Ethereum archival blocks and state proofs"
 
 [workspace]
 members = [

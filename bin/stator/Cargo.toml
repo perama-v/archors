@@ -1,0 +1,13 @@
+[package]
+name = "archors_stator"
+version = "0.1.0"
+edition = "2021"
+description = "Generates test cases for eth_getRequiredBlockState"
+
+[dependencies]
+anyhow = "1.0.69"
+archors_inventory = { path = "../../crates/inventory"}
+archors_types = { path = "../../crates/types"}
+clap = { version = "4.3.19", features = ["derive"] }
+tokio = { version = "1.26.0", features = ["full"] }
+url = "2.4.0"
