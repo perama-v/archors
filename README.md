@@ -89,9 +89,9 @@ node must provide both:
 |6|inventory|measure data overlap between proofs for different blocks|
 |7|inventory|collect stats on bytes/gas for proofs|
 |8|verify|verify merkle proof for block|
-|9|tracer|locally produce `debug_traceTransaction` / `debug_traceBlock` using proof data|
-|10|inventory|obtain required state in one pass|
-|11|multiproof|create and update merkle multiproof for block|
+|9|inventory|obtain required state in one pass|
+|10|tracer|locally produce `debug_traceTransaction` / `debug_traceBlock` using proof data|
+|11|multiproof|get post-block state root|
 
 ### Binary: Interpret
 
