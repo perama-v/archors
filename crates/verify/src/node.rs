@@ -146,9 +146,6 @@ impl NodeKind {
                         *parent_root_to_update = next_root;
                         Ok(ProofType::Pending)
                     }
-                    PathNature::SubPathDiverges | PathNature::FullPathDiverges => {
-                        Ok(ProofType::ExtensionExclusion)
-                    }
                     PathNature::SubPathDiverges(_) => {
                         if next_node.is_empty() {
                             todo!("Even in an exclusion proof, shouldn't there be a next node?")

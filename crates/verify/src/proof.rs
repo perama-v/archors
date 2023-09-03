@@ -75,9 +75,7 @@ pub struct SingleProofPath {
 
 impl SingleProofPath {
     pub fn verify(&self) -> Result<Verified, ProofError> {
-        // Traverse path
-        let total_nodes = self.proof.len();
-        if total_nodes == 0 {
+        if self.proof.is_empty() {
             return Err(ProofError::EmptyProof);
         }
         let mut traversal = NibblePath::init(&self.path);

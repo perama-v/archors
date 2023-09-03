@@ -7,8 +7,8 @@ use ethers::types::{EIP1186ProofResponse, H160, H256, U64};
 use revm::{
     db::{CacheDB, EmptyDB},
     primitives::{
-        keccak256, AccountInfo, Bytecode, BytecodeState, Bytes, HashMap as rHashMap, B160, B256,
-        U256,
+        keccak256, Account, AccountInfo, Bytecode, BytecodeState, Bytes, HashMap as rHashMap, B160,
+        B256, U256,
     },
 };
 
@@ -51,17 +51,25 @@ pub struct BlockProofsBasic {
 }
 
 /// Behaviour that any proof-based format must provide to be convertible into
-/// a revm DB.
+/// a revm DB. In other words, behaviour that makes the state data extractable for re-execution.
 ///
 /// Returned types are revm-based.
 pub trait CompleteAccounts {
     /// Gets account information in a format that can be inserted into a
-    /// revm db.
+    /// revm db. This includes contract bytecode.
     fn get_account_info(&self, address: &B160) -> Result<AccountInfo, StateError>;
     /// Gets all the addresses.
     fn addresses(&self) -> Vec<B160>;
     /// Gets the storage key-val pairs for the account of the address.
     fn get_account_storage(&self, address: &B160) -> Result<rHashMap<U256, U256>, StateError>;
+    /// Updates an account.
+    ///
+    /// Note that some account updates may require additional information. Key deletion may
+    /// remove nodes and restructure the trie. In this case, some additional nodes must be
+    /// provided.
+    fn update_account(&mut self, address: &B160, account: Account) -> Result<(), StateError>;
+    /// Computes the merkle root of the state trie.
+    fn root_hash(&self) -> Result<H256, StateError>;
 }
 
 impl CompleteAccounts for BlockProofsBasic {
@@ -107,6 +115,36 @@ impl CompleteAccounts for BlockProofsBasic {
             .keys()
             .map(|address| B160::from(address.0))
             .collect()
+    }
+
+    fn update_account(&mut self, _address: &B160, _account: Account) -> Result<(), StateError> {
+        todo!()
+    }
+
+    fn root_hash(&self) -> Result<H256, StateError> {
+        todo!()
+    }
+}
+
+/// Provides block hashes that the EVM requires to re-execute a block.
+/// Behaviour that any proof-based format must provide to be convertible into a revm DB.
+///
+/// Returned types are revm-based.
+pub trait BlockHashes {
+    /// Gets BLOCKAHSH opcode accesses required for the block.
+    /// Pairs are (block_number, block_hash).
+    fn get_blockhash_accesses(&self) -> Result<rHashMap<U256, B256>, StateError>;
+}
+
+impl BlockHashes for BlockProofsBasic {
+    fn get_blockhash_accesses(&self) -> Result<rHashMap<U256, B256>, StateError> {
+        let mut accesses = rHashMap::new();
+        for access in self.block_hashes.iter() {
+            let num: U256 = eu64_to_ru256(*access.0);
+            let hash: B256 = access.1 .0.into();
+            accesses.insert(num, hash);
+        }
+        Ok(accesses)
     }
 }
 
@@ -207,6 +245,14 @@ impl CompleteAccounts for RequiredBlockState {
             }
         }
         Ok(storage_map)
+    }
+
+    fn update_account(&mut self, _address: &B160, _account: Account) -> Result<(), StateError> {
+        todo!()
+    }
+
+    fn root_hash(&self) -> Result<H256, StateError> {
+        todo!()
     }
 }
 

@@ -4,12 +4,10 @@
 use std::collections::HashMap;
 
 use archors_verify::path::{
-    nibbles_to_prefixed_bytes, prefixed_bytes_to_nibbles, NibblePath, PathError,
-    PathNature::{FullPathDiverges, FullPathMatches, SubPathDiverges, SubPathMatches},
+    nibbles_to_prefixed_bytes, prefixed_bytes_to_nibbles, NibblePath, PathError, PathNature,
     PrefixEncoding, TargetNodeEncoding,
 };
 use ethers::{
-    prelude::k256::sha2::digest::typenum::Mod,
     types::{Bytes, H256},
     utils::keccak256,
 };
@@ -17,6 +15,7 @@ use rlp::Encodable;
 use rlp_derive::{RlpDecodable, RlpEncodable};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use PathNature::*;
 
 use crate::utils::hex_encode;
 
@@ -182,6 +181,7 @@ impl MultiProof {
                         item_index: 1,
                         traversal_record,
                     });
+
                     match (traversal.match_or_mismatch(extension)?, intent) {
                         (SubPathMatches, _) => {
                             let item =
@@ -561,7 +561,7 @@ impl MultiProof {
             //     - new leaf
             //     - modified node (extension or leaf)
             //       - original branch (if parent is extension)
-            return Ok(branch_hash);
+            Ok(branch_hash)
         } else {
             // Paths have something in common
             // - traversal ...
@@ -577,7 +577,7 @@ impl MultiProof {
             let common_extension_hash = keccak256(&common_extension);
             self.data
                 .insert(common_extension_hash.into(), common_extension.into());
-            return Ok(common_extension_hash);
+            Ok(common_extension_hash)
         }
     }
     /// Modifies a (parent) node with a removed child. Returns the hash of the
@@ -706,15 +706,14 @@ impl MultiProof {
         let grandparent_node: Vec<Vec<u8>> = rlp::decode_list(&grandparent_rlp);
 
         let hash: H256 = H256::from_slice(only_child_hash);
-        let only_child_rlp: Vec<u8> = match self.data.get(&hash){
+        let only_child_rlp: Vec<u8> = match self.data.get(&hash) {
             Some(node) => {
                 // Not likely - this is data outside the path of this key.
                 todo!();
-            },
+            }
             None => {
-
                 todo!("sibling fetching here")
-            },
+            }
         };
         let only_child_node: Vec<Vec<u8>> = rlp::decode_list(&only_child_rlp);
 

@@ -80,7 +80,9 @@ pub fn process_trace(trace_style: ModeFlag) {
     while let Some(unprocessed_step) = peekable_lines.next() {
         // Add processed information to step.
         // Exclude uninteresting steps (ADD, ISZERO, ...)
-        let Some(mut processed) = process_step(&unprocessed_step) else {continue};
+        let Some(mut processed) = process_step(&unprocessed_step) else {
+            continue;
+        };
 
         // Get the stack from the peek and include it in the processed step.
         if let Some(peek) = peekable_lines.peek() {

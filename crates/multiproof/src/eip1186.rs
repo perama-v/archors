@@ -1,5 +1,5 @@
 //! For working with multiple EIP-1186 proofs in concert.
-use std::{collections::HashMap, str::FromStr};
+use std::collections::HashMap;
 
 use ethers::{
     types::{EIP1186ProofResponse, H160, H256, U256, U64},
@@ -83,7 +83,7 @@ impl EIP1186MultiProof {
         // Then get the storage hash and update the account. Then
         // traverse the account multiproof and make changes.
         // Then get the root.
-        Ok(todo!())
+        todo!()
     }
 
     /// Update the proof so that the values in the provided account match.

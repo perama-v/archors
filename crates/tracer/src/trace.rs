@@ -1,12 +1,14 @@
 //! For executing a block using state.
 
-use ethers::types::{Block, Transaction, H256};
-use revm::primitives::{Account, HashMap, B160, U256};
+use std::collections::HashMap;
+
+use ethers::types::{Block, Transaction};
+use revm::primitives::U256;
 use thiserror::Error;
 
 use crate::{
     evm::{BlockEvm, EvmError},
-    state::{build_state_from_proofs, CompleteState, Provable, StateError},
+    state::{build_state_from_proofs, BlockHashes, CompleteAccounts, StateError},
     utils::{hex_encode, UtilsError},
 };
 
@@ -33,19 +35,16 @@ pub enum TraceError {
 }
 
 /// Holds an EVM configured for single block execution.
-pub struct BlockExecutor<T: CompleteState + Provable> {
+pub struct BlockExecutor<T: CompleteAccounts + BlockHashes> {
     block_evm: BlockEvm,
     block: Block<Transaction>,
     /// Keeps block proof data up to date as transactions are applied.
     block_proof_cache: T,
 }
 
-impl<T: CompleteState + Provable> BlockExecutor<T> {
+impl<T: CompleteAccounts + BlockHashes> BlockExecutor<T> {
     /// Loads the tracer so that it is ready to trace a block.
-    pub fn load(block: Block<Transaction>, block_proofs: T) -> Result<Self, TraceError>
-    where
-        T: CompleteState + Provable,
-    {
+    pub fn load(block: Block<Transaction>, block_proofs: T) -> Result<Self, TraceError> {
         // For all important states, load into db.
         let mut cache_db = build_state_from_proofs(&block_proofs)?;
         cache_db.block_hashes = block_proofs.get_blockhash_accesses()?;
@@ -92,7 +91,7 @@ impl<T: CompleteState + Provable> BlockExecutor<T> {
     }
     /// Traces every transaction in the block.
     pub fn trace_block(mut self) -> Result<(), TraceError> {
-        let final_tx_index = self.block.transactions.len() - 1;
+        let mut post_block_state_delta = HashMap::new();
         for (index, tx) in self.block.transactions.into_iter().enumerate() {
             let post_tx = self
                 .block_evm
@@ -103,18 +102,21 @@ impl<T: CompleteState + Provable> BlockExecutor<T> {
 
             let _result = post_tx.result;
             // Update a proof object with state that changed after a transaction was executed.
-            for (address, account) in post_tx.state.into_iter() {
-                self.block_proof_cache.update_account(address, account)?;
-            }
-            let root = self.block_proof_cache.root_hash();
-
-            if (index == final_tx_index) && (root != self.block.state_root) {
-                return Err(TraceError::PostBlockStateRoot {
-                    computed_root: hex_encode(root),
-                    header_root: hex_encode(self.block.state_root),
-                });
-            }
+            post_block_state_delta.extend(post_tx.state);
         }
+        // After all transactions have been run, apply the final state diff to the proof data.
+        for (address, account) in post_block_state_delta.into_iter() {
+            self.block_proof_cache.update_account(&address, account)?;
+        }
+        // Get new post-block root.
+        let root = self.block_proof_cache.root_hash()?;
+        if root != self.block.state_root {
+            return Err(TraceError::PostBlockStateRoot {
+                computed_root: hex_encode(root),
+                header_root: hex_encode(self.block.state_root),
+            });
+        }
+
         Ok(())
     }
 }

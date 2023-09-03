@@ -5,11 +5,11 @@ edition = "2021"
 description = "Tool for tracing an Ethereum block using state from EIP-1186 proofs"
 
 [dependencies]
-archors_types = {path = "../types"}
+archors_types = { path = "../types" }
 ethers = "2.0.4"
 hex = "0.4.3"
-revm = { path = "../../../revm/crates/revm", features = ["serde"]}
-serde = {  version = "1.0.152", features = ["derive"] }
+revm = { path = "../../../revm/crates/revm", features = ["serde"] }
+serde = { version = "1.0.152", features = ["derive"] }
 serde_json = "1.0.94"
 thiserror = "1.0.40"
 
