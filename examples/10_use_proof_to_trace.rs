@@ -22,7 +22,7 @@ use archors_tracer::{state::BlockProofsBasic, trace::BlockExecutor};
 /// - 196, 204,
 /// - 205 simple transfer (final tx)
 fn main() -> Result<()> {
-    let block_number = 17193183;
+    let block_number = 17190873;
     // Get block to execute (eth_getBlockByNumber).
     let block = get_block_from_cache(block_number)?;
     let form = StateDataForm::SpecCompliant;
