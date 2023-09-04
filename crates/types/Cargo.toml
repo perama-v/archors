@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+ethers = "2.0.4"
+hex = "0.4.3"
+revm = { path = "../../../revm/crates/revm", features = ["serde"] }
 thiserror = "1.0.40"
 ssz_rs = "0.8.0"
 ssz_rs_derive = "0.8.0"

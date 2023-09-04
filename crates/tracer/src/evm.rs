@@ -2,6 +2,9 @@
 
 use std::io::stdout;
 
+use archors_types::utils::{
+    access_list_e_to_r, eu256_to_ru256, eu256_to_u64, eu64_to_ru256, ru256_to_u64, UtilsError
+};
 use ethers::types::{Block, Transaction};
 use revm::{
     db::{CacheDB, EmptyDB},
@@ -10,10 +13,6 @@ use revm::{
     EVM,
 };
 use thiserror::Error;
-
-use crate::utils::{
-    access_list_e_to_r, eu256_to_ru256, eu256_to_u64, eu64_to_ru256, ru256_to_u64, UtilsError,
-};
 
 /// An error with tracing a block
 #[derive(Debug, Error, PartialEq)]

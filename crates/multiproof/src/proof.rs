@@ -27,7 +27,7 @@ pub enum ProofError {
     ExtensionHasNoItems,
     #[error("Extension node has no next node")]
     ExtensionHasNoNextNode,
-    #[error("Single proof root hash {computed} doesn't match multiproof root {expected}")]
+    #[error("Unable to insert single proof with root {computed} into multiproof with root {expected}")]
     ProofRootMismatch { expected: String, computed: String },
     #[error("Node has no items")]
     NodeEmpty,
@@ -89,7 +89,7 @@ pub enum ModifyError {
     BranchItemInvalidLength,
 }
 /// A representation of a Merkle PATRICIA Trie Multi Proof.
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct MultiProof {
     /// node_hash -> node_rlp
     data: HashMap<H256, Vec<u8>>,
@@ -107,8 +107,9 @@ impl MultiProof {
         }
     }
     /// Add a new single proof to the multiproof.
-    pub fn insert(&mut self, proof: Vec<Bytes>) -> Result<(), ProofError> {
+    pub fn insert_proof(&mut self, proof: Vec<Bytes>) -> Result<(), ProofError> {
         for (index, node) in proof.into_iter().enumerate() {
+            println!("node bytes  {}", hex_encode(&node));
             let hash: H256 = keccak256(&node).into();
             if index == 0 && hash != self.root {
                 return Err(ProofError::ProofRootMismatch {

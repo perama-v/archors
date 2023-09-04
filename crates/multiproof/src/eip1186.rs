@@ -1,10 +1,10 @@
 //! For working with multiple EIP-1186 proofs in concert.
 use std::collections::HashMap;
 
-use ethers::{
-    types::{EIP1186ProofResponse, H160, H256, U256, U64},
-    utils::keccak256,
-};
+use archors_types::execution::StateForEvm;
+use ethers::types::{EIP1186ProofResponse, H160, H256, U64};
+use ethers::utils::keccak256;
+use revm::primitives::{AccountInfo, HashMap as rHashMap, B160, B256, U256, Account};
 use rlp::Encodable;
 use rlp_derive::{RlpDecodable, RlpEncodable};
 use serde::Deserialize;
@@ -43,18 +43,21 @@ impl EIP1186MultiProof {
     /// Proofs for different accounts combined into a single multiproof.
     ///
     /// Proofs must be from the same tree with the same root.
-    pub fn from_separate(proofs: Vec<EIP1186ProofResponse>) -> Result<Self, MultiProofError> {
-        let mut accounts = MultiProof::default();
+    pub fn from_separate(
+        proofs: Vec<EIP1186ProofResponse>,
+        root: H256,
+    ) -> Result<Self, MultiProofError> {
+        let mut accounts = MultiProof::init(root);
         let mut storage: HashMap<H160, MultiProof> = HashMap::default();
         let mut storage_keys: HashMap<H160, Vec<H256>> = HashMap::default();
         for acc_proof in proofs {
             // Account
-            accounts.insert(acc_proof.account_proof)?;
-            let mut storage_multiproof = MultiProof::default();
+            accounts.insert_proof(acc_proof.account_proof)?;
+            let mut storage_multiproof = MultiProof::init(acc_proof.storage_hash);
             let mut keys: Vec<H256> = vec![];
             for storage_proof in acc_proof.storage_proof {
                 // Storage for account
-                storage_multiproof.insert(storage_proof.proof)?;
+                storage_multiproof.insert_proof(storage_proof.proof)?;
                 keys.push(storage_proof.key);
             }
             storage.insert(acc_proof.address, storage_multiproof);
@@ -90,7 +93,7 @@ impl EIP1186MultiProof {
     pub fn modify_account<T: AsRef<str>>(
         &mut self,
         address_string: T,
-        account: Account,
+        account: AccountModifier,
     ) -> Result<H256, MultiProofError> {
         let address = H160::from_slice(&hex_decode(address_string)?);
         let path = keccak256(address);
@@ -108,9 +111,54 @@ impl EIP1186MultiProof {
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, Deserialize, RlpEncodable, RlpDecodable)]
-pub struct Account {
+pub struct AccountModifier {
     pub nonce: U64,
     pub balance: U256,
     pub storage_hash: H256,
     pub code_hash: H256,
+}
+
+impl StateForEvm for EIP1186MultiProof {
+    fn get_account_info(
+        &self,
+        address: &B160,
+    ) -> Result<AccountInfo, archors_types::execution::EvmStateError> {
+        todo!()
+    }
+
+    fn addresses(&self) -> Vec<B160> {
+        todo!()
+    }
+
+    fn get_account_storage(
+        &self,
+        address: &B160,
+    ) -> Result<rHashMap<U256, U256>, archors_types::execution::EvmStateError> {
+        todo!()
+    }
+
+    fn get_blockhash_accesses(
+        &self,
+    ) -> Result<rHashMap<U256, B256>, archors_types::execution::EvmStateError> {
+        todo!()
+    }
+
+    fn update_account(
+        &mut self,
+        address: &B160,
+        account: Account,
+    ) -> Result<(), archors_types::execution::EvmStateError> {
+        todo!()
+    }
+
+    fn state_root_pre_block(&self) -> Result<H256, archors_types::execution::EvmStateError> {
+        todo!()
+    }
+
+    fn state_root_post_block(
+        self,
+        changes: HashMap<B160, Account>,
+    ) -> Result<H256, archors_types::execution::EvmStateError> {
+        todo!()
+    }
 }

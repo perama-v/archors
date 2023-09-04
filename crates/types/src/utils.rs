@@ -1,8 +1,9 @@
-use archors_types::alias::{SszH256, SszU256, SszU64};
 use ethers::types::transaction::eip2930::AccessList;
 use hex::FromHexError;
 use revm::primitives::{B160, B256, U256};
 use thiserror::Error;
+
+use crate::alias::{SszU256, SszU64, SszH256};
 
 /// An error with tracing a block
 #[derive(Debug, Error, PartialEq)]

@@ -2,23 +2,25 @@
 
 use std::collections::HashMap;
 
+use archors_types::{
+    execution::{EvmStateError, StateForEvm}, utils::hex_encode,
+};
 use ethers::types::{Block, Transaction};
 use revm::primitives::U256;
 use thiserror::Error;
 
 use crate::{
     evm::{BlockEvm, EvmError},
-    state::{build_state_from_proofs, StateError, StateForEvm},
-    utils::{hex_encode, UtilsError},
+    state::build_state_from_proofs,
 };
 
 /// An error with tracing a block
 #[derive(Debug, Error, PartialEq)]
 pub enum TraceError {
     #[error("StateError {0}")]
-    StateError(#[from] StateError),
+    StateError(#[from] EvmStateError),
     #[error("UtilsError {0}")]
-    UtilsError(#[from] UtilsError),
+    UtilsError(#[from] archors_types::utils::UtilsError),
     #[error("EvmError {0}")]
     EvmError(#[from] EvmError),
     #[error("Computed state root {computed_root} does not match header state root {header_root}")]
@@ -109,7 +111,7 @@ impl<T: StateForEvm> BlockExecutor<T> {
         let state_root_post = self
             .block_proof_cache
             .state_root_post_block(post_block_state_delta)?;
-        
+
         let header_root = self.block.state_root;
         if header_root != state_root_post {
             return Err(TraceError::PostBlockStateRoot {
