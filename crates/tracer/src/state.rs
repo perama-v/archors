@@ -54,7 +54,7 @@ pub struct BlockProofsBasic {
 /// a revm DB. In other words, behaviour that makes the state data extractable for re-execution.
 ///
 /// Returned types are revm-based.
-pub trait CompleteAccounts {
+pub trait StateForEvm {
     /// Gets account information in a format that can be inserted into a
     /// revm db. This includes contract bytecode.
     fn get_account_info(&self, address: &B160) -> Result<AccountInfo, StateError>;
@@ -62,17 +62,26 @@ pub trait CompleteAccounts {
     fn addresses(&self) -> Vec<B160>;
     /// Gets the storage key-val pairs for the account of the address.
     fn get_account_storage(&self, address: &B160) -> Result<rHashMap<U256, U256>, StateError>;
+    /// Gets BLOCKAHSH opcode accesses required for the block.
+    /// Pairs are (block_number, block_hash).
+    fn get_blockhash_accesses(&self) -> Result<rHashMap<U256, B256>, StateError>;
     /// Updates an account.
     ///
     /// Note that some account updates may require additional information. Key deletion may
     /// remove nodes and restructure the trie. In this case, some additional nodes must be
     /// provided.
+    ///
     fn update_account(&mut self, address: &B160, account: Account) -> Result<(), StateError>;
     /// Computes the merkle root of the state trie.
-    fn root_hash(&self) -> Result<H256, StateError>;
+    fn state_root_pre_block(&self) -> Result<H256, StateError>;
+    /// Apply changes received from the EVM for the entire block, return the root.
+    ///
+    /// This consumes the state object to avoid reuse of the state data, which is only
+    /// to be used for a single block.
+    fn state_root_post_block(self, changes: HashMap<B160, Account> ) -> Result<H256, StateError>;
 }
 
-impl CompleteAccounts for BlockProofsBasic {
+impl StateForEvm for BlockProofsBasic {
     fn get_account_info(&self, address: &B160) -> Result<AccountInfo, StateError> {
         let account = self
             .proofs
@@ -121,60 +130,31 @@ impl CompleteAccounts for BlockProofsBasic {
         todo!()
     }
 
-    fn root_hash(&self) -> Result<H256, StateError> {
+    fn get_blockhash_accesses(&self) -> Result<rHashMap<U256, B256>, StateError> {
+        let mut accesses = rHashMap::new();
+        for access in self.block_hashes.iter() {
+            let num: U256 = eu64_to_ru256(*access.0);
+            let hash: B256 = access.1 .0.into();
+            accesses.insert(num, hash);
+        }
+        Ok(accesses)
+    }
+
+    fn state_root_pre_block(&self) -> Result<H256, StateError> {
+        todo!()
+    }
+
+    fn state_root_post_block(self, changes: HashMap<B160, Account> ) -> Result<H256, StateError> {
         todo!()
     }
 }
 
-/// Provides block hashes that the EVM requires to re-execute a block.
-/// Behaviour that any proof-based format must provide to be convertible into a revm DB.
-///
-/// Returned types are revm-based.
-pub trait BlockHashes {
-    /// Gets BLOCKAHSH opcode accesses required for the block.
-    /// Pairs are (block_number, block_hash).
-    fn get_blockhash_accesses(&self) -> Result<rHashMap<U256, B256>, StateError>;
-}
-
-impl BlockHashes for BlockProofsBasic {
-    fn get_blockhash_accesses(&self) -> Result<rHashMap<U256, B256>, StateError> {
-        let mut accesses = rHashMap::new();
-        for access in self.block_hashes.iter() {
-            let num: U256 = eu64_to_ru256(*access.0);
-            let hash: B256 = access.1 .0.into();
-            accesses.insert(num, hash);
-        }
-        Ok(accesses)
-    }
-}
-
-/// Behaviour that any proof-based format must provide to be convertible into
-/// a revm DB.
-///
-/// Returned types are revm-based.
-pub trait BlockHashes {
-    /// Gets BLOCKAHSH opcode accesses required for the block.
-    /// Pairs are (block_number, block_hash).
-    fn get_blockhash_accesses(&self) -> Result<rHashMap<U256, B256>, StateError>;
-}
-
-impl BlockHashes for BlockProofsBasic {
-    fn get_blockhash_accesses(&self) -> Result<rHashMap<U256, B256>, StateError> {
-        let mut accesses = rHashMap::new();
-        for access in self.block_hashes.iter() {
-            let num: U256 = eu64_to_ru256(*access.0);
-            let hash: B256 = access.1 .0.into();
-            accesses.insert(num, hash);
-        }
-        Ok(accesses)
-    }
-}
 
 /// Inserts state from a collection of EIP-1186 proof into an in-memory DB.
 /// The DB can then be used by the EVM to read/write state during execution.
 pub fn build_state_from_proofs<T>(block_proofs: &T) -> Result<CacheDB<EmptyDB>, StateError>
 where
-    T: CompleteAccounts,
+    T: StateForEvm,
 {
     let mut db = CacheDB::new(EmptyDB::default());
 
@@ -192,7 +172,7 @@ where
     Ok(db)
 }
 
-impl CompleteAccounts for RequiredBlockState {
+impl StateForEvm for RequiredBlockState {
     fn get_account_info(&self, address: &B160) -> Result<AccountInfo, StateError> {
         let target = SszH160::try_from(address.0.to_vec()).unwrap();
         for account in self.compact_eip1186_proofs.iter() {
@@ -251,12 +231,6 @@ impl CompleteAccounts for RequiredBlockState {
         todo!()
     }
 
-    fn root_hash(&self) -> Result<H256, StateError> {
-        todo!()
-    }
-}
-
-impl BlockHashes for RequiredBlockState {
     fn get_blockhash_accesses(&self) -> Result<rHashMap<U256, B256>, StateError> {
         let mut accesses = rHashMap::default();
         for access in self.blockhashes.iter() {
@@ -265,6 +239,14 @@ impl BlockHashes for RequiredBlockState {
             accesses.insert(num, hash);
         }
         Ok(accesses)
+    }
+
+    fn state_root_pre_block(&self) -> Result<H256, StateError> {
+        todo!()
+    }
+
+    fn state_root_post_block(self, _changes: HashMap<B160, Account> ) -> Result<H256, StateError> {
+        todo!()
     }
 }
 

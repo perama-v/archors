@@ -8,7 +8,7 @@ use thiserror::Error;
 
 use crate::{
     evm::{BlockEvm, EvmError},
-    state::{build_state_from_proofs, BlockHashes, CompleteAccounts, StateError},
+    state::{build_state_from_proofs, StateError, StateForEvm},
     utils::{hex_encode, UtilsError},
 };
 
@@ -35,14 +35,14 @@ pub enum TraceError {
 }
 
 /// Holds an EVM configured for single block execution.
-pub struct BlockExecutor<T: CompleteAccounts + BlockHashes> {
+pub struct BlockExecutor<T: StateForEvm> {
     block_evm: BlockEvm,
     block: Block<Transaction>,
     /// Keeps block proof data up to date as transactions are applied.
     block_proof_cache: T,
 }
 
-impl<T: CompleteAccounts + BlockHashes> BlockExecutor<T> {
+impl<T: StateForEvm> BlockExecutor<T> {
     /// Loads the tracer so that it is ready to trace a block.
     pub fn load(block: Block<Transaction>, block_proofs: T) -> Result<Self, TraceError> {
         // For all important states, load into db.
@@ -105,15 +105,16 @@ impl<T: CompleteAccounts + BlockHashes> BlockExecutor<T> {
             post_block_state_delta.extend(post_tx.state);
         }
         // After all transactions have been run, apply the final state diff to the proof data.
-        for (address, account) in post_block_state_delta.into_iter() {
-            self.block_proof_cache.update_account(&address, account)?;
-        }
         // Get new post-block root.
-        let root = self.block_proof_cache.root_hash()?;
-        if root != self.block.state_root {
+        let state_root_post = self
+            .block_proof_cache
+            .state_root_post_block(post_block_state_delta)?;
+        
+        let header_root = self.block.state_root;
+        if header_root != state_root_post {
             return Err(TraceError::PostBlockStateRoot {
-                computed_root: hex_encode(root),
-                header_root: hex_encode(self.block.state_root),
+                computed_root: hex_encode(state_root_post),
+                header_root: hex_encode(header_root),
             });
         }
 
