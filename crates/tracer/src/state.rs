@@ -2,22 +2,15 @@
 
 use std::collections::HashMap;
 
-use archors_types::{alias::SszH160, state::RequiredBlockState, execution::{StateForEvm, EvmStateError}, utils::{
-    eh256_to_ru256, eu256_to_ru256, eu64_to_ru256, hex_encode, ssz_h256_to_rb256,
-    ssz_h256_to_ru256, ssz_u256_to_ru256, ssz_u64_to_u64, UtilsError,
-}};
+use archors_types::{
+    execution::{EvmStateError, StateForEvm},
+    utils::{eh256_to_ru256, eu256_to_ru256, eu64_to_ru256, hex_encode},
+};
 use ethers::types::{EIP1186ProofResponse, H160, H256, U64};
 use revm::{
     db::{CacheDB, EmptyDB},
-    primitives::{
-        keccak256, Account, AccountInfo, Bytecode, BytecodeState, Bytes, HashMap as rHashMap, B160,
-        B256, U256,
-    },
+    primitives::{Account, AccountInfo, Bytecode, Bytes, HashMap as rHashMap, B160, B256, U256},
 };
-
-use thiserror::Error;
-
-
 
 /// A basic map of accounts to proofs. Includes all state required to trace a block.
 ///
@@ -84,10 +77,6 @@ impl StateForEvm for BlockProofsBasic {
             .collect()
     }
 
-    fn update_account(&mut self, _address: &B160, _account: Account) -> Result<(), EvmStateError> {
-        todo!()
-    }
-
     fn get_blockhash_accesses(&self) -> Result<rHashMap<U256, B256>, EvmStateError> {
         let mut accesses = rHashMap::new();
         for access in self.block_hashes.iter() {
@@ -98,15 +87,10 @@ impl StateForEvm for BlockProofsBasic {
         Ok(accesses)
     }
 
-    fn state_root_pre_block(&self) -> Result<H256, EvmStateError> {
-        todo!()
-    }
-
-    fn state_root_post_block(self, changes: HashMap<B160, Account> ) -> Result<H256, EvmStateError> {
+    fn state_root_post_block(self, changes: HashMap<B160, Account>) -> Result<B256, EvmStateError> {
         todo!()
     }
 }
-
 
 /// Inserts state from a collection of EIP-1186 proof into an in-memory DB.
 /// The DB can then be used by the EVM to read/write state during execution.
@@ -129,7 +113,6 @@ where
     }
     Ok(db)
 }
-
 
 #[cfg(test)]
 mod test {

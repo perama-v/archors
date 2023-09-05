@@ -3,10 +3,11 @@
 use std::collections::HashMap;
 
 use archors_types::{
-    execution::{EvmStateError, StateForEvm}, utils::hex_encode,
+    execution::{EvmStateError, StateForEvm},
+    utils::hex_encode,
 };
-use ethers::types::{Block, Transaction};
-use revm::primitives::U256;
+use ethers::types::{Block, Transaction, H256};
+use revm::primitives::{B256, U256};
 use thiserror::Error;
 
 use crate::{
@@ -63,32 +64,40 @@ impl<T: StateForEvm> BlockExecutor<T> {
     }
     /// Traces a single transaction in the block.
     ///
-    /// Preceeding transactions are executed but not traced.
+    /// The entire block is executed but only the specified transaction is inspected
+    /// (trace sent to stdout)
     pub fn trace_transaction(mut self, target_tx_index: usize) -> Result<(), TraceError> {
+        let mut post_block_state_delta = HashMap::new();
         for tx in self.block.transactions.into_iter() {
             let index = tx
                 .transaction_index
                 .ok_or(TraceError::TxWithoutIndex)?
                 .as_u64() as usize;
-            if index == target_tx_index {
-                // Execute with tracing.
-                let _outcome = self
-                    .block_evm
-                    .add_transaction_environment(tx)
-                    .map_err(|source| TraceError::TxEnvError { source, index })?
-                    .execute_with_inspector_eip3155()
-                    .map_err(|source| TraceError::TxExecutionError { source, index })?;
-                // Ignore remaining transactions.
-                return Ok(());
-            }
-            // Execute without tracing.
-            let _outcome = self
-                .block_evm
-                .add_transaction_environment(tx)
-                .map_err(|source| TraceError::TxEnvError { source, index })?
-                .execute_without_inspector()
-                .map_err(|source| TraceError::TxExecutionError { source, index })?;
+            let post_tx = match index {
+                i if i == target_tx_index => {
+                    // Execute with tracing.
+                    self.block_evm
+                        .add_transaction_environment(tx)
+                        .map_err(|source| TraceError::TxEnvError { source, index })?
+                        .execute_with_inspector_eip3155()
+                        .map_err(|source| TraceError::TxExecutionError { source, index })?
+                }
+                _ => {
+                    // Execute without tracing.
+                    self.block_evm
+                        .add_transaction_environment(tx)
+                        .map_err(|source| TraceError::TxEnvError { source, index })?
+                        .execute_without_inspector()
+                        .map_err(|source| TraceError::TxExecutionError { source, index })?
+                }
+            };
+            post_block_state_delta.extend(post_tx.state);
         }
+        let expected_root = self.block.state_root;
+        let computed_root = self
+            .block_proof_cache
+            .state_root_post_block(post_block_state_delta)?;
+        post_root_ok(&expected_root, &computed_root)?;
         Ok(())
     }
     /// Traces every transaction in the block.
@@ -106,22 +115,25 @@ impl<T: StateForEvm> BlockExecutor<T> {
             // Update a proof object with state that changed after a transaction was executed.
             post_block_state_delta.extend(post_tx.state);
         }
-        // After all transactions have been run, apply the final state diff to the proof data.
-        // Get new post-block root.
-        let state_root_post = self
+        let expected_root = self.block.state_root;
+        let computed_root = self
             .block_proof_cache
             .state_root_post_block(post_block_state_delta)?;
-
-        let header_root = self.block.state_root;
-        if header_root != state_root_post {
-            return Err(TraceError::PostBlockStateRoot {
-                computed_root: hex_encode(state_root_post),
-                header_root: hex_encode(header_root),
-            });
-        }
-
+        post_root_ok(&expected_root, &computed_root)?;
         Ok(())
     }
+}
+
+/// Checks that the post-block state root matches the state root in the block header.
+fn post_root_ok(&header_root: &H256, computed_root: &B256) -> Result<(), TraceError> {
+    let header_root = B256::from(header_root);
+    if computed_root != &header_root {
+        return Err(TraceError::PostBlockStateRoot {
+            computed_root: hex_encode(computed_root),
+            header_root: hex_encode(header_root),
+        });
+    }
+    Ok(())
 }
 
 #[cfg(test)]

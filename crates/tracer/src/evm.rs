@@ -3,13 +3,13 @@
 use std::io::stdout;
 
 use archors_types::utils::{
-    access_list_e_to_r, eu256_to_ru256, eu256_to_u64, eu64_to_ru256, ru256_to_u64, UtilsError
+    access_list_e_to_r, eu256_to_ru256, eu256_to_u64, eu64_to_ru256, ru256_to_u64, UtilsError,
 };
 use ethers::types::{Block, Transaction};
 use revm::{
     db::{CacheDB, EmptyDB},
     inspectors::{NoOpInspector, TracerEip3155},
-    primitives::{EVMError, ExecutionResult, ResultAndState, TransactTo, U256},
+    primitives::{EVMError, ResultAndState, TransactTo, U256},
     EVM,
 };
 use thiserror::Error;
@@ -124,7 +124,7 @@ impl BlockEvm {
     /// next transaction to be added.
     pub fn execute_with_inspector_eip3155(&mut self) -> Result<ResultAndState, EvmError> {
         self.tx_env_status.ready_to_execute()?;
-        // Run the tx to get the state changes, but don't commit to the EVM env yet.=.
+        // Run the tx to get the state changes, but don't commit to the EVM env yet.
         // The changes will be used to compute the post-tx state root.
         // Use a dummy inspector.
         let noop_inspector = NoOpInspector {};
@@ -142,11 +142,18 @@ impl BlockEvm {
     ///
     /// This applies the transaction and leaves the EVM ready for the
     /// next transaction to be added.
-    pub fn execute_without_inspector(&mut self) -> Result<ExecutionResult, EvmError> {
+    pub fn execute_without_inspector(&mut self) -> Result<ResultAndState, EvmError> {
         self.tx_env_status.ready_to_execute()?;
-        let outcome = self.evm.transact_commit().map_err(EvmError::from)?;
+        // Run the tx to get the state changes, but don't commit to the EVM env yet.
+        // The changes will be used to compute the post-tx state root.
+        // Use a dummy inspector.
+        let noop_inspector = NoOpInspector {};
+        let state_changes = self.evm.inspect_ref(noop_inspector)?;
+
+        // Now run the tx again, this time to commit the changes.
+        let _outcome = self.evm.transact_commit().map_err(EvmError::from)?;
         self.tx_env_status.executed()?;
-        Ok(outcome)
+        Ok(state_changes)
     }
 }
 

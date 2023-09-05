@@ -2,7 +2,6 @@
 
 use std::collections::HashMap;
 
-use ethers::types::H256;
 use revm::primitives::{Account, AccountInfo, HashMap as rHashMap, B160, B256, U256};
 use thiserror::Error;
 
@@ -34,18 +33,14 @@ pub trait StateForEvm {
     /// Gets BLOCKAHSH opcode accesses required for the block.
     /// Pairs are (block_number, block_hash).
     fn get_blockhash_accesses(&self) -> Result<rHashMap<U256, B256>, EvmStateError>;
-    /// Updates an account.
+    /// Apply account changes received from the EVM for the entire block, compute the state
+    /// root and return it.
+    ///
+    /// This consumes the state object to avoid reuse of the state data, which is only
+    /// to be used for a single block.
     ///
     /// Note that some account updates may require additional information. Key deletion may
     /// remove nodes and restructure the trie. In this case, some additional nodes must be
     /// provided.
-    ///
-    fn update_account(&mut self, address: &B160, account: Account) -> Result<(), EvmStateError>;
-    /// Computes the merkle root of the state trie.
-    fn state_root_pre_block(&self) -> Result<H256, EvmStateError>;
-    /// Apply changes received from the EVM for the entire block, return the root.
-    ///
-    /// This consumes the state object to avoid reuse of the state data, which is only
-    /// to be used for a single block.
-    fn state_root_post_block(self, changes: HashMap<B160, Account>) -> Result<H256, EvmStateError>;
+    fn state_root_post_block(self, changes: HashMap<B160, Account>) -> Result<B256, EvmStateError>;
 }

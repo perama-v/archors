@@ -5,7 +5,6 @@ use archors_types::execution::{EvmStateError, StateForEvm};
 use archors_types::utils::{eh256_to_ru256, eu256_to_ru256, eu64_to_ru256, rb160_to_eh160};
 use ethers::types::{EIP1186ProofResponse, H160, H256, U256 as eU256, U64};
 use ethers::utils::keccak256;
-use revm::db::{AccountState, DbAccount};
 use revm::primitives::{
     Account, AccountInfo, Bytecode, BytecodeState, Bytes, HashMap as rHashMap, B160, B256, U256,
 };
@@ -96,8 +95,11 @@ impl EIP1186MultiProof {
             block_hashes,
         })
     }
-    /// Get the state root.
-    pub fn root(&self) -> H256 {
+    /// Get the state root in the block header of the prior block.
+    ///
+    /// This root is what all the proofs are based in. The state root each the header
+    /// is post-execution.
+    pub fn prior_state_root(&self) -> H256 {
         self.account_proofs.root
     }
 
@@ -127,7 +129,7 @@ impl EIP1186MultiProof {
         let intent = Intent::Modify(account.rlp_bytes().into());
 
         self.account_proofs.traverse(path.into(), &intent)?;
-        let new_state_root = self.root();
+        let new_state_root = todo!();
         Ok(new_state_root)
     }
     /// Verifies that every key present in this multiproof is valid with respect to the
@@ -200,15 +202,7 @@ impl StateForEvm for EIP1186MultiProof {
         Ok(accesses)
     }
 
-    fn update_account(&mut self, address: &B160, account: Account) -> Result<(), EvmStateError> {
-        todo!()
-    }
-
-    fn state_root_pre_block(&self) -> Result<H256, EvmStateError> {
-        todo!()
-    }
-
-    fn state_root_post_block(self, changes: HashMap<B160, Account>) -> Result<H256, EvmStateError> {
-        todo!()
+    fn state_root_post_block(self, _changes: HashMap<B160, Account>) -> Result<B256, EvmStateError> {
+        Ok(B256::default())
     }
 }

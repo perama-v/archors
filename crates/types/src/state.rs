@@ -17,13 +17,10 @@ use crate::{
     execution::{EvmStateError, StateForEvm},
     utils::{ssz_h256_to_rb256, ssz_h256_to_ru256, ssz_u256_to_ru256, ssz_u64_to_u64, UtilsError},
 };
-use ethers::types::{EIP1186ProofResponse, H160, H256, U64};
-use revm::{
-    db::{CacheDB, EmptyDB},
-    primitives::{
-        keccak256, Account, AccountInfo, Bytecode, BytecodeState, Bytes, HashMap as rHashMap, B160,
-        B256, U256,
-    },
+
+use revm::primitives::{
+    keccak256, Account, AccountInfo, Bytecode, BytecodeState, Bytes, HashMap as rHashMap, B160,
+    B256, U256,
 };
 
 #[derive(Debug, Error)]
@@ -180,10 +177,6 @@ impl StateForEvm for RequiredBlockState {
         Ok(storage_map)
     }
 
-    fn update_account(&mut self, _address: &B160, _account: Account) -> Result<(), EvmStateError> {
-        todo!()
-    }
-
     fn get_blockhash_accesses(&self) -> Result<rHashMap<U256, B256>, EvmStateError> {
         let mut accesses = rHashMap::default();
         for access in self.blockhashes.iter() {
@@ -194,14 +187,7 @@ impl StateForEvm for RequiredBlockState {
         Ok(accesses)
     }
 
-    fn state_root_pre_block(&self) -> Result<H256, EvmStateError> {
-        todo!()
-    }
-
-    fn state_root_post_block(
-        self,
-        _changes: HashMap<B160, Account>,
-    ) -> Result<H256, EvmStateError> {
+    fn state_root_post_block(self, changes: HashMap<B160, Account>) -> Result<B256, EvmStateError> {
         todo!()
     }
 }
