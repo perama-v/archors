@@ -2,7 +2,7 @@
 use std::collections::HashMap;
 
 use archors_types::execution::{EvmStateError, StateForEvm};
-use archors_types::utils::{eh256_to_ru256, eu256_to_ru256, rb160_to_eh160};
+use archors_types::utils::{eh256_to_ru256, eu256_to_ru256, eu64_to_ru256, rb160_to_eh160};
 use ethers::types::{EIP1186ProofResponse, H160, H256, U256 as eU256, U64};
 use ethers::utils::keccak256;
 use revm::db::{AccountState, DbAccount};
@@ -31,10 +31,10 @@ pub enum MultiProofError {
 /// Multiple EIP-1186 proofs in a representation that can be updated.
 /// This allows post-transaction state root calculation.
 ///
-/// Contains relevant data only, meaning
-/// that which is state that the current block accesses (reads/writes).
-///
+/// For the proof components, duplicate internal nodes are removed.
 /// Accounts all go in one trie. Storage goes in one trie per account.
+///
+/// Includes state data that is necessary and sufficient to execute a block.
 pub struct EIP1186MultiProof {
     /// Accounts
     pub accounts: HashMap<H160, AccountData>,
@@ -46,6 +46,8 @@ pub struct EIP1186MultiProof {
     pub storage: HashMap<H160, Vec<StorageData>>,
     /// Contract bytecode
     pub code: HashMap<H256, Vec<u8>>,
+    /// Map of block number -> block hash
+    pub block_hashes: HashMap<U64, H256>,
 }
 
 impl EIP1186MultiProof {
@@ -55,6 +57,7 @@ impl EIP1186MultiProof {
     pub fn from_separate(
         proofs: Vec<EIP1186ProofResponse>,
         code: HashMap<H256, Vec<u8>>,
+        block_hashes: HashMap<U64, H256>,
     ) -> Result<Self, MultiProofError> {
         let mut account_proofs = MultiProof::default();
         let mut storage_proofs: HashMap<H160, MultiProof> = HashMap::default();
@@ -90,6 +93,7 @@ impl EIP1186MultiProof {
             storage_proofs,
             storage,
             code,
+            block_hashes,
         })
     }
     /// Get the state root.
@@ -187,7 +191,13 @@ impl StateForEvm for EIP1186MultiProof {
     }
 
     fn get_blockhash_accesses(&self) -> Result<rHashMap<U256, B256>, EvmStateError> {
-        todo!()
+        let mut accesses = rHashMap::new();
+        for access in self.block_hashes.iter() {
+            let num: U256 = eu64_to_ru256(*access.0);
+            let hash: B256 = access.1 .0.into();
+            accesses.insert(num, hash);
+        }
+        Ok(accesses)
     }
 
     fn update_account(&mut self, address: &B160, account: Account) -> Result<(), EvmStateError> {

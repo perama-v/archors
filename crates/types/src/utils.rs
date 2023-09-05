@@ -3,7 +3,7 @@ use hex::FromHexError;
 use revm::primitives::{B160, B256, U256};
 use thiserror::Error;
 
-use crate::alias::{SszU256, SszU64, SszH256};
+use crate::alias::{SszH256, SszU256, SszU64};
 
 /// An error with tracing a block
 #[derive(Debug, Error, PartialEq)]
@@ -83,7 +83,7 @@ pub fn rb256_to_eh256(input: revm::primitives::B256) -> ethers::types::H256 {
 }
 
 /// revm B160 to ethers H160
-pub fn rb160_to_eh160(input: B160) -> ethers::types::H160 {
+pub fn rb160_to_eh160(input: &B160) -> ethers::types::H160 {
     let bytes: &[u8; 20] = input.as_fixed_bytes();
     bytes.into()
 }
@@ -221,7 +221,7 @@ mod test {
     fn test_rb160_to_eh160() {
         let hash_string = "0x0000000000000000000000000000000000001234";
         let input = B160::from_str(hash_string).unwrap();
-        let derived = rb160_to_eh160(input);
+        let derived = rb160_to_eh160(&input);
         let expected = ethers::types::H160::from_str(hash_string).unwrap();
         assert_eq!(derived, expected);
     }
