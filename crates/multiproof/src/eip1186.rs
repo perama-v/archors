@@ -202,7 +202,10 @@ impl StateForEvm for EIP1186MultiProof {
         Ok(accesses)
     }
 
-    fn state_root_post_block(self, _changes: HashMap<B160, Account>) -> Result<B256, EvmStateError> {
+    fn state_root_post_block(
+        self,
+        _changes: HashMap<B160, Account>,
+    ) -> Result<B256, EvmStateError> {
         Ok(B256::default())
     }
 }

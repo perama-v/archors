@@ -552,7 +552,7 @@ mod test {
         let even_extension =
             &hex::decode("000123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
                 .unwrap();
-        let mut traversal = NibblePath::init(
+        let traversal = NibblePath::init(
             &hex::decode("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
                 .unwrap(),
         );
@@ -651,7 +651,7 @@ mod test {
         let even_extension =
             &hex::decode("006666666666abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
                 .unwrap();
-        let mut traversal = NibblePath::init(
+        let traversal = NibblePath::init(
             &hex::decode("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
                 .unwrap(),
         );
