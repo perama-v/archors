@@ -91,7 +91,6 @@ node must provide both:
 |8|verify|verify merkle proof for block|
 |9|inventory|obtain required state in one pass|
 |10|tracer|locally produce `debug_traceTransaction` / `debug_traceBlock` using proof data|
-|11|multiproof|get post-block state root|
 
 ### Binary: Interpret
 
