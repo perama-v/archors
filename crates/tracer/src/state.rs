@@ -2,33 +2,15 @@
 
 use std::collections::HashMap;
 
-use archors_types::{alias::SszH160, state::RequiredBlockState};
+use archors_types::{
+    execution::{EvmStateError, StateForEvm},
+    utils::{eh256_to_ru256, eu256_to_ru256, eu64_to_ru256, hex_encode},
+};
 use ethers::types::{EIP1186ProofResponse, H160, H256, U64};
 use revm::{
     db::{CacheDB, EmptyDB},
-    primitives::{
-        keccak256, AccountInfo, Bytecode, BytecodeState, Bytes, HashMap as rHashMap, B160, B256,
-        U256,
-    },
+    primitives::{Account, AccountInfo, Bytecode, Bytes, HashMap as rHashMap, B160, B256, U256},
 };
-
-use thiserror::Error;
-
-use crate::utils::{
-    eh256_to_ru256, eu256_to_ru256, eu64_to_ru256, hex_encode, ssz_h256_to_rb256,
-    ssz_h256_to_ru256, ssz_u256_to_ru256, ssz_u64_to_u64, UtilsError,
-};
-
-/// An error with tracing a block
-#[derive(Debug, Error, PartialEq)]
-pub enum StateError {
-    #[error("Unable to get account state proof for address")]
-    NoProofForAddress(String),
-    #[error("UtilsError {0}")]
-    UtilsError(#[from] UtilsError),
-    #[error("Could not initialise storage for account {address}, error {error}")]
-    AccountStorageInit { error: String, address: String },
-}
 
 /// A basic map of accounts to proofs. Includes all state required to trace a block.
 ///
@@ -50,26 +32,12 @@ pub struct BlockProofsBasic {
     pub block_hashes: HashMap<U64, H256>,
 }
 
-/// Behaviour that any proof-based format must provide to be convertible into
-/// a revm DB.
-///
-/// Returned types are revm-based.
-pub trait CompleteAccounts {
-    /// Gets account information in a format that can be inserted into a
-    /// revm db.
-    fn get_account_info(&self, address: &B160) -> Result<AccountInfo, StateError>;
-    /// Gets all the addresses.
-    fn addresses(&self) -> Vec<B160>;
-    /// Gets the storage key-val pairs for the account of the address.
-    fn get_account_storage(&self, address: &B160) -> Result<rHashMap<U256, U256>, StateError>;
-}
-
-impl CompleteAccounts for BlockProofsBasic {
-    fn get_account_info(&self, address: &B160) -> Result<AccountInfo, StateError> {
+impl StateForEvm for BlockProofsBasic {
+    fn get_account_info(&self, address: &B160) -> Result<AccountInfo, EvmStateError> {
         let account = self
             .proofs
             .get(&address.0.into())
-            .ok_or_else(|| StateError::NoProofForAddress(hex_encode(address)))?;
+            .ok_or_else(|| EvmStateError::NoProofForAddress(hex_encode(address)))?;
 
         let code: Option<Bytecode> = self.code.get(&account.code_hash).map(|data| {
             let revm_bytes = Bytes::copy_from_slice(data);
@@ -83,11 +51,11 @@ impl CompleteAccounts for BlockProofsBasic {
         };
         Ok(info)
     }
-    fn get_account_storage(&self, address: &B160) -> Result<rHashMap<U256, U256>, StateError> {
+    fn get_account_storage(&self, address: &B160) -> Result<rHashMap<U256, U256>, EvmStateError> {
         let account = self
             .proofs
             .get(&address.0.into())
-            .ok_or_else(|| StateError::NoProofForAddress(hex_encode(address)))?;
+            .ok_or_else(|| EvmStateError::NoProofForAddress(hex_encode(address)))?;
 
         // Storage key-val pairs for the account.
         let mut storage: rHashMap<U256, U256> = rHashMap::new();
@@ -108,20 +76,8 @@ impl CompleteAccounts for BlockProofsBasic {
             .map(|address| B160::from(address.0))
             .collect()
     }
-}
 
-/// Behaviour that any proof-based format must provide to be convertible into
-/// a revm DB.
-///
-/// Returned types are revm-based.
-pub trait BlockHashes {
-    /// Gets BLOCKAHSH opcode accesses required for the block.
-    /// Pairs are (block_number, block_hash).
-    fn get_blockhash_accesses(&self) -> Result<rHashMap<U256, B256>, StateError>;
-}
-
-impl BlockHashes for BlockProofsBasic {
-    fn get_blockhash_accesses(&self) -> Result<rHashMap<U256, B256>, StateError> {
+    fn get_blockhash_accesses(&self) -> Result<rHashMap<U256, B256>, EvmStateError> {
         let mut accesses = rHashMap::new();
         for access in self.block_hashes.iter() {
             let num: U256 = eu64_to_ru256(*access.0);
@@ -130,13 +86,17 @@ impl BlockHashes for BlockProofsBasic {
         }
         Ok(accesses)
     }
+
+    fn state_root_post_block(self, changes: HashMap<B160, Account>) -> Result<B256, EvmStateError> {
+        unimplemented!("Post execution root check is not implemented for basic proof data format.")
+    }
 }
 
 /// Inserts state from a collection of EIP-1186 proof into an in-memory DB.
 /// The DB can then be used by the EVM to read/write state during execution.
-pub fn build_state_from_proofs<T>(block_proofs: &T) -> Result<CacheDB<EmptyDB>, StateError>
+pub fn build_state_from_proofs<T>(block_proofs: &T) -> Result<CacheDB<EmptyDB>, EvmStateError>
 where
-    T: CompleteAccounts,
+    T: StateForEvm,
 {
     let mut db = CacheDB::new(EmptyDB::default());
 
@@ -146,80 +106,12 @@ where
 
         let storage = block_proofs.get_account_storage(&address)?;
         db.replace_account_storage(address, storage)
-            .map_err(|source| StateError::AccountStorageInit {
+            .map_err(|source| EvmStateError::AccountStorageInit {
                 error: source.to_string(),
                 address: hex_encode(address),
             })?;
     }
     Ok(db)
-}
-
-impl CompleteAccounts for RequiredBlockState {
-    fn get_account_info(&self, address: &B160) -> Result<AccountInfo, StateError> {
-        let target = SszH160::try_from(address.0.to_vec()).unwrap();
-        for account in self.compact_eip1186_proofs.iter() {
-            if account.address == target {
-                let code_hash = ssz_h256_to_rb256(&account.code_hash);
-
-                let code = self
-                    .contracts
-                    .iter()
-                    .find(|contract| keccak256(contract).eq(&code_hash))
-                    .map(|ssz_bytes| {
-                        let bytes = ssz_bytes.to_vec();
-                        let len = bytes.len();
-                        Bytecode {
-                            bytecode: Bytes::from(bytes),
-                            hash: code_hash,
-                            state: BytecodeState::Checked { len },
-                        }
-                    });
-
-                let account = AccountInfo {
-                    balance: ssz_u256_to_ru256(account.balance.to_owned())?,
-                    nonce: ssz_u64_to_u64(account.nonce.to_owned())?,
-                    code_hash,
-                    code,
-                };
-                return Ok(account);
-            }
-        }
-        Err(StateError::NoProofForAddress(address.to_string()))
-    }
-
-    fn addresses(&self) -> Vec<B160> {
-        self.compact_eip1186_proofs
-            .iter()
-            .map(|proof| B160::from_slice(&proof.address))
-            .collect()
-    }
-
-    fn get_account_storage(&self, address: &B160) -> Result<rHashMap<U256, U256>, StateError> {
-        let target = SszH160::try_from(address.0.to_vec()).unwrap();
-        let mut storage_map = rHashMap::default();
-        for account in self.compact_eip1186_proofs.iter() {
-            if account.address == target {
-                for storage in account.storage_proofs.iter() {
-                    let key: U256 = ssz_h256_to_ru256(storage.key.to_owned())?;
-                    let value: U256 = ssz_u256_to_ru256(storage.value.to_owned())?;
-                    storage_map.insert(key, value);
-                }
-            }
-        }
-        Ok(storage_map)
-    }
-}
-
-impl BlockHashes for RequiredBlockState {
-    fn get_blockhash_accesses(&self) -> Result<rHashMap<U256, B256>, StateError> {
-        let mut accesses = rHashMap::default();
-        for access in self.blockhashes.iter() {
-            let num = U256::from(ssz_u64_to_u64(access.block_number.to_owned())?);
-            let hash: B256 = ssz_h256_to_rb256(&access.block_hash);
-            accesses.insert(num, hash);
-        }
-        Ok(accesses)
-    }
 }
 
 #[cfg(test)]

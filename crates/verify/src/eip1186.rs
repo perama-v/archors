@@ -10,7 +10,7 @@ use serde::Deserialize;
 use thiserror::Error;
 
 use crate::{
-    proof::{ProofError, SingleProof, Verified},
+    proof::{ProofError, SingleProofPath, Verified},
     utils::hex_encode,
 };
 
@@ -108,7 +108,7 @@ pub fn verify_account_component(
         code_hash: proof.code_hash,
     };
 
-    let account_prover = SingleProof {
+    let account_prover = SingleProofPath {
         proof: proof.account_proof.clone(),
         root: H256::from_slice(block_state_root).0,
         path: keccak256(proof.address.as_bytes()),
@@ -134,22 +134,31 @@ fn verify_account_storage_component(
     storage_hash: &[u8; 32],
     storage_proof: StorageProof,
 ) -> Result<(), StorageError> {
-    // let claimed_storage = Storage(storage_proof.value);
-    let claimed_value = storage_proof.value;
-    let storage_prover = SingleProof {
+
+
+    let rlp_value = rlp::encode(&storage_proof.value).to_vec();
+    /*
+    // TODO: Use ./multiproof/src/eip1186::slot_rlp_from_value(). See yellow paper (205).
+    let claimed_value = match rlp_value.len() < 32 {
+        true => rlp_value,
+        false => keccak256(rlp_value).to_vec(),
+    };
+    */
+
+    let storage_prover = SingleProofPath {
         proof: storage_proof.proof,
         root: *storage_hash,
         path: keccak256(storage_proof.key),
-        claimed_value: rlp::encode(&claimed_value).to_vec(),
+        claimed_value: rlp_value,
     };
 
     match storage_prover.verify()? {
         Verified::Inclusion => {
-            if claimed_value == U256::from(0) {
+            if storage_proof.value == U256::from(0) {
                 return Err(StorageError::InclusionProofForZeroValue);
             }
         }
-        Verified::Exclusion => match claimed_value.is_zero() {
+        Verified::Exclusion => match storage_proof.value.is_zero() {
             true => {}
             false => return Err(StorageError::ExclusionProofForNonZeroValue),
         },

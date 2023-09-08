@@ -1,8 +1,9 @@
-use archors_types::alias::{SszH256, SszU256, SszU64};
 use ethers::types::transaction::eip2930::AccessList;
 use hex::FromHexError;
 use revm::primitives::{B160, B256, U256};
 use thiserror::Error;
+
+use crate::alias::{SszH256, SszU256, SszU64};
 
 /// An error with tracing a block
 #[derive(Debug, Error, PartialEq)]
@@ -63,6 +64,30 @@ pub fn eh256_to_ru256(input: ethers::types::H256) -> U256 {
     U256::from_be_bytes(*bytes)
 }
 
+/// revm U256 to ethers U256
+pub fn ru256_to_eu256(input: U256) -> ethers::types::U256 {
+    let slice = input.as_le_slice();
+    ethers::types::U256::from_little_endian(slice)
+}
+
+/// revm U256 to ethers H256
+pub fn ru256_to_eh256(input: U256) -> ethers::types::H256 {
+    let array: [u8; 32] = input.to_be_bytes();
+    array.into()
+}
+
+/// revm B256 to ethers H256
+pub fn rb256_to_eh256(input: revm::primitives::B256) -> ethers::types::H256 {
+    let bytes: &[u8; 32] = input.as_fixed_bytes();
+    bytes.into()
+}
+
+/// revm B160 to ethers H160
+pub fn rb160_to_eh160(input: &B160) -> ethers::types::H160 {
+    let bytes: &[u8; 20] = input.as_fixed_bytes();
+    bytes.into()
+}
+
 /// Helper for revm access list type conversion.
 type RevmAccessList = Vec<RevmAccessesListItem>;
 
@@ -115,6 +140,7 @@ pub fn ssz_h256_to_rb256(input: &SszH256) -> B256 {
 #[cfg(test)]
 mod test {
     use ethers::types::{transaction::eip2930::AccessListItem, H160, H256};
+    use revm::primitives::B256;
 
     use super::*;
 
@@ -160,6 +186,43 @@ mod test {
         .unwrap();
         let derived: U256 = eh256_to_ru256(input);
         let expected: U256 = U256::try_from_be_slice(&hex_decode("0x1234").unwrap()).unwrap();
+        assert_eq!(derived, expected);
+    }
+
+    #[test]
+    fn test_ru256_to_eu256() {
+        let input = U256::from_str("0x1234").unwrap();
+        let derived = ru256_to_eu256(input);
+        let expected = ethers::types::U256::from_str("0x1234").unwrap();
+        assert_eq!(derived, expected);
+    }
+
+    #[test]
+    fn test_ru256_to_eh256() {
+        let input = U256::from_str("0x1234").unwrap();
+        let derived = ru256_to_eh256(input);
+        let expected = ethers::types::H256::from_str(
+            "0x0000000000000000000000000000000000000000000000000000000000001234",
+        )
+        .unwrap();
+        assert_eq!(derived, expected);
+    }
+
+    #[test]
+    fn test_rb256_to_eh256() {
+        let hash_string = "0x0000000000000000000000000000000000000000000000000000000000001234";
+        let input = B256::from_str(hash_string).unwrap();
+        let derived = rb256_to_eh256(input);
+        let expected = ethers::types::H256::from_str(hash_string).unwrap();
+        assert_eq!(derived, expected);
+    }
+
+    #[test]
+    fn test_rb160_to_eh160() {
+        let hash_string = "0x0000000000000000000000000000000000001234";
+        let input = B160::from_str(hash_string).unwrap();
+        let derived = rb160_to_eh160(&input);
+        let expected = ethers::types::H160::from_str(hash_string).unwrap();
         assert_eq!(derived, expected);
     }
 

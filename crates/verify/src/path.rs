@@ -45,10 +45,18 @@ pub enum PathError {
     NextNodeNotInPath,
     #[error("Proof key does not contain data for a traversal path")]
     NoPath,
+    #[error("Not enough nibbles to create encoded path")]
+    NibblesEmpty,
     #[error("Encoded path does not contain a first byte")]
     PathEmpty,
-    #[error("Path expected to be 32 bytes")]
+    #[error("Path too long, expected to be 32 bytes")]
     PathTooLong,
+    #[error("Path too short, expected to be 32 bytes")]
+    PathTooShort,
+    #[error("Must pass an even number of nibbles")]
+    OddNumberOfNibbles,
+    #[error("Unable to request nibble at index greater than 63")]
+    InvalidIndex,
 }
 
 /// A sequence of nibbles that represent a traversal from the root of a merkle patricia tree.
@@ -58,7 +66,7 @@ pub enum PathError {
 pub struct NibblePath {
     // Nibble (u4) sequence represented as sequence of u8.
     path: Vec<u8>,
-    // Index of nibble in path that is being viseted.
+    // Index of nibble in path that is being visited.
     visiting_index: usize,
 }
 
@@ -129,7 +137,7 @@ impl NibblePath {
     }
     /// Checks if terminal extension/leaf node has a path that matches (inclusion proof) or
     /// doesn't match (exclusion proof).
-    pub fn match_or_mismatch(&mut self, final_subpath: &[u8]) -> Result<PathNature, PathError> {
+    pub fn match_or_mismatch(&self, final_subpath: &[u8]) -> Result<PathNature, PathError> {
         let mut temp_index = self.visiting_index;
         let subpath_nibbles = prefixed_bytes_to_nibbles(final_subpath)?;
         let path_finished = temp_index + subpath_nibbles.len() == 64;
@@ -147,9 +155,9 @@ impl NibblePath {
                 // If this proof is valid, it will be an exclusion proof.
                 if path_finished {
                     // full 32 bytes
-                    return Ok(PathNature::FullPathDiverges);
+                    return Ok(PathNature::FullPathDiverges(temp_index));
                 }
-                return Ok(PathNature::SubPathDiverges);
+                return Ok(PathNature::SubPathDiverges(temp_index));
             }
             // Walk forward
             temp_index += 1;
@@ -159,6 +167,36 @@ impl NibblePath {
             return Ok(PathNature::FullPathMatches);
         }
         Ok(PathNature::SubPathMatches)
+    }
+    /// Returns the nibbles that have not yet been traversed.
+    ///
+    /// Each nibble is represented as a byte.
+    pub fn pending(&self) -> Result<Vec<u8>, PathError> {
+        Ok(self.path[self.visiting_index..].to_vec())
+    }
+    /// Returns the prefix-encoded path including the nibbles at start and end indices.
+    ///
+    /// As the path (32 bytes) nibbles are represented as u8, the final nibble is at index 63.
+    pub fn get_encoded_path(
+        &self,
+        target: TargetNodeEncoding,
+        nibble_start: usize,
+        nibble_end: usize,
+    ) -> Result<Vec<u8>, PathError> {
+        let nibbles = self
+            .path
+            .get(nibble_start..=nibble_end)
+            .ok_or(PathError::PathTooShort)?;
+        let path_bytes = nibbles_to_prefixed_bytes(nibbles, target)?;
+        Ok(path_bytes)
+    }
+    /// Returns the index of the nibble being visiting next.
+    pub fn visiting_index(&self) -> usize {
+        self.visiting_index
+    }
+    /// Returns the nibble at the specified index.
+    pub fn nibble_at_index(&self, index: usize) -> Result<u8, PathError> {
+        Ok(*self.path.get(index).ok_or(PathError::InvalidIndex)?)
     }
 }
 
@@ -171,16 +209,14 @@ impl NibblePath {
 /// This condition is necessary but not sufficient for the overall proof verification.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PathNature {
-    //InclusionProof,
-    //ExclusionProof,
     // Paths match, not yet 32 bytes
     SubPathMatches,
-    // Paths diverge, not yet 32 bytes
-    SubPathDiverges,
+    // Paths diverge, not yet 32 bytes. Contains index of first divergent nibble.
+    SubPathDiverges(usize),
     // 32 byte paths match
     FullPathMatches,
-    // 32 byte paths diverge
-    FullPathDiverges,
+    // 32 byte paths diverge. Contains index of first divergent nibble.
+    FullPathDiverges(usize),
 }
 
 /// Turns sequence of bytes in to sequence of nibbles. The bytes are prefixed
@@ -188,8 +224,10 @@ pub enum PathNature {
 ///
 /// Each nibble will be represented as a u8.
 ///
-/// vec![0x12, 0xab] -> vec![0x1, 0x2, 0xa, 0xb]
-fn prefixed_bytes_to_nibbles(bytes: &[u8]) -> Result<Vec<u8>, PathError> {
+/// E.g. from an encoded odd leaf path:
+///
+/// `vec![0x3f, 0x1c, 0xb8]` -> `vec![0xf, 0x1, 0xc, 0xb, 0x8]`
+pub fn prefixed_bytes_to_nibbles(bytes: &[u8]) -> Result<Vec<u8>, PathError> {
     let mut nibbles = vec![];
 
     let first_byte = bytes.first().ok_or(PathError::ExtensionPathEmpty)?;
@@ -208,6 +246,50 @@ fn prefixed_bytes_to_nibbles(bytes: &[u8]) -> Result<Vec<u8>, PathError> {
         .for_each(|nibble| nibbles.push(nibble));
 
     Ok(nibbles)
+}
+
+/// Converts a collection of nibbles into prefix-encoded bytes.
+///
+/// Each nibble is represented as a u8.
+///
+/// E.g. into an encoded odd leaf path:
+///
+/// `vec![0xf, 0x1, 0xc, 0xb, 0x8]` -> `vec![0x3f, 0x1c, 0xb8]`
+pub fn nibbles_to_prefixed_bytes(
+    unencoded_nibbles: &[u8],
+    target: TargetNodeEncoding,
+) -> Result<Vec<u8>, PathError> {
+    let is_even = unencoded_nibbles.len() % 2 == 0;
+    let mut encoded: Vec<u8> = vec![];
+    match (target, is_even) {
+        (TargetNodeEncoding::Extension, true) => {
+            // 0 0 + remaining
+            encoded.push(0x00);
+            encoded.extend(nibbles_to_bytes(unencoded_nibbles)?);
+        }
+        (TargetNodeEncoding::Extension, false) => {
+            // 1 first + remaining
+            let (first, remaining) = unencoded_nibbles
+                .split_first()
+                .ok_or(PathError::NibblesEmpty)?;
+            encoded.push(nibbles_to_byte(&[0x1, *first])?);
+            encoded.extend(nibbles_to_bytes(remaining)?);
+        }
+        (TargetNodeEncoding::Leaf, true) => {
+            // 2 0 + remaining
+            encoded.push(0x20);
+            encoded.extend(nibbles_to_bytes(unencoded_nibbles)?);
+        }
+        (TargetNodeEncoding::Leaf, false) => {
+            // 3 first + remaining
+            let (first, remaining) = unencoded_nibbles
+                .split_first()
+                .ok_or(PathError::NibblesEmpty)?;
+            encoded.push(nibbles_to_byte(&[0x3, *first])?);
+            encoded.extend(nibbles_to_bytes(remaining)?);
+        }
+    };
+    Ok(encoded)
 }
 
 /// Hex prefix encoding, used for paths in Merkle Patricia Tries. The Odd variants
@@ -255,6 +337,40 @@ fn byte_to_nibbles(byte: &u8) -> [u8; 2] {
     [high, low]
 }
 
+/// Represents array of nibbles as little endian byte: [0xb, 0xc] -> 0xbc
+pub fn nibbles_to_byte(nibbles: &[u8; 2]) -> Result<u8, PathError> {
+    // 0xb -> 0xb0
+    if nibbles[0] > 15 {
+        return Err(PathError::InvalidNibble(nibbles[0]));
+    }
+    let high = nibbles[0] << 4;
+    // 0xc -> 0x0c
+    if nibbles[1] > 15 {
+        return Err(PathError::InvalidNibble(nibbles[1]));
+    }
+    let low = nibbles[1] & 0x0F;
+    // 0xb0 & 0x0c -> 0xbc
+    Ok(high | low)
+}
+
+pub enum TargetNodeEncoding {
+    Leaf,
+    Extension,
+}
+
+/// Converts a collection of nibbles into bytes: [0xb, 0xc, 0x3, 0xa] -> [0xbc, 0x3a]
+pub fn nibbles_to_bytes(nibbles: &[u8]) -> Result<Vec<u8>, PathError> {
+    if nibbles.len() % 2 != 0 {
+        return Err(PathError::OddNumberOfNibbles);
+    }
+    let mut bytes: Vec<u8> = vec![];
+    for (index, nibble) in nibbles.iter().enumerate().step_by(2) {
+        let byte = nibbles_to_byte(&[*nibble, nibbles[index + 1]])?;
+        bytes.push(byte);
+    }
+    Ok(bytes)
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -280,6 +396,43 @@ mod test {
         assert_eq!(
             prefixed_bytes_to_nibbles(odd_leaf).unwrap(),
             vec![0xf, 0x1, 0xc, 0xb, 0x8]
+        );
+    }
+
+    #[test]
+    fn test_nibbles_to_prefixed_bytes() {
+        // Even extension '012345'
+        assert_eq!(
+            nibbles_to_prefixed_bytes(
+                &vec![0x0, 0x1, 0x2, 0x3, 0x4, 0x5],
+                TargetNodeEncoding::Extension
+            )
+            .unwrap(),
+            hex::decode("00012345").unwrap()
+        );
+        // Odd extension '12345'
+        assert_eq!(
+            nibbles_to_prefixed_bytes(
+                &vec![0x1, 0x2, 0x3, 0x4, 0x5],
+                TargetNodeEncoding::Extension
+            )
+            .unwrap(),
+            hex::decode("112345").unwrap()
+        );
+        // Even leaf '0f1cb8'
+        assert_eq!(
+            nibbles_to_prefixed_bytes(
+                &vec![0x0, 0xf, 0x1, 0xc, 0xb, 0x8],
+                TargetNodeEncoding::Leaf
+            )
+            .unwrap(),
+            hex::decode("200f1cb8").unwrap()
+        );
+        // Odd leaf 'f1cb8'
+        assert_eq!(
+            nibbles_to_prefixed_bytes(&vec![0xf, 0x1, 0xc, 0xb, 0x8], TargetNodeEncoding::Leaf)
+                .unwrap(),
+            hex::decode("3f1cb8").unwrap()
         );
     }
 
@@ -399,7 +552,7 @@ mod test {
         let even_extension =
             &hex::decode("000123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
                 .unwrap();
-        let mut traversal = NibblePath::init(
+        let traversal = NibblePath::init(
             &hex::decode("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
                 .unwrap(),
         );
@@ -429,7 +582,7 @@ mod test {
             traversal
                 .match_or_mismatch(&hex::decode("000123444444").unwrap())
                 .unwrap(),
-            PathNature::SubPathDiverges
+            PathNature::SubPathDiverges(5)
         );
         // Apply/traverse the first extension node.
         traversal
@@ -447,7 +600,7 @@ mod test {
         // Path that diverges in the final nibble.
         assert_eq!(
             traversal.match_or_mismatch(even_extension_3).unwrap(),
-            PathNature::FullPathDiverges
+            PathNature::FullPathDiverges(63)
         );
     }
 
@@ -498,13 +651,13 @@ mod test {
         let even_extension =
             &hex::decode("006666666666abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
                 .unwrap();
-        let mut traversal = NibblePath::init(
+        let traversal = NibblePath::init(
             &hex::decode("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
                 .unwrap(),
         );
         assert_eq!(
             traversal.match_or_mismatch(even_extension).unwrap(),
-            PathNature::FullPathDiverges
+            PathNature::FullPathDiverges(0)
         );
     }
 
@@ -530,7 +683,7 @@ mod test {
             traversal
                 .match_or_mismatch(divergent_even_extension)
                 .unwrap(),
-            PathNature::SubPathDiverges
+            PathNature::SubPathDiverges(22)
         );
     }
 
@@ -569,7 +722,81 @@ mod test {
         let even_leaf = &hex::decode("20abcdef0123456789666666").unwrap();
         assert_eq!(
             traversal.match_or_mismatch(even_leaf).unwrap(),
-            PathNature::FullPathDiverges
+            PathNature::FullPathDiverges(58)
         );
+    }
+
+    #[test]
+    fn test_nibbles_to_byte() {
+        assert_eq!(nibbles_to_byte(&[0x0, 0x0]).unwrap(), 0x00);
+        assert_eq!(nibbles_to_byte(&[0xf, 0xf]).unwrap(), 0xff);
+        assert_eq!(nibbles_to_byte(&[0xf, 0x0]).unwrap(), 0xf0);
+        assert_eq!(nibbles_to_byte(&[0x0, 0xf]).unwrap(), 0x0f);
+        assert_eq!(nibbles_to_byte(&[0x3, 0xc]).unwrap(), 0x3c);
+        assert!(nibbles_to_byte(&[0x30, 0x9]).is_err());
+    }
+
+    #[test]
+    fn test_get_encoded_path_even_extension() {
+        let traversal = NibblePath::init(
+            &hex::decode("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+                .unwrap(),
+        );
+        let encoded_path = traversal
+            .get_encoded_path(TargetNodeEncoding::Extension, 60, 63)
+            .unwrap();
+        // 00cdef
+        assert_eq!(encoded_path, vec![0x00, 0xcd, 0xef]);
+    }
+
+    #[test]
+    fn test_get_encoded_path_odd_extension() {
+        let traversal = NibblePath::init(
+            &hex::decode("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+                .unwrap(),
+        );
+        let encoded_path = traversal
+            .get_encoded_path(TargetNodeEncoding::Extension, 61, 63)
+            .unwrap();
+        // 1def
+        assert_eq!(encoded_path, vec![0x1d, 0xef]);
+    }
+
+    #[test]
+    fn test_get_encoded_path_even_leaf() {
+        let traversal = NibblePath::init(
+            &hex::decode("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+                .unwrap(),
+        );
+        let encoded_path = traversal
+            .get_encoded_path(TargetNodeEncoding::Leaf, 60, 63)
+            .unwrap();
+        // 20cdef
+        assert_eq!(encoded_path, vec![0x20, 0xcd, 0xef]);
+    }
+
+    #[test]
+    fn test_get_encoded_path_odd_leaf() {
+        let traversal = NibblePath::init(
+            &hex::decode("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+                .unwrap(),
+        );
+        let encoded_path = traversal
+            .get_encoded_path(TargetNodeEncoding::Leaf, 61, 63)
+            .unwrap();
+        // 3def
+        assert_eq!(encoded_path, vec![0x3d, 0xef]);
+    }
+
+    #[test]
+    fn test_nibbles_to_bytes() {
+        assert_eq!(
+            nibbles_to_bytes(&[0xb, 0xc, 0x3, 0xa, 0xf, 0x1]).unwrap(),
+            vec![0xbc, 0x3a, 0xf1]
+        );
+        // Invalid nibbles
+        assert!(nibbles_to_bytes(&[0xb, 0xc, 0x3, 0xa, 0xf6, 0x1e]).is_err());
+        // Odd length
+        assert!(nibbles_to_bytes(&[0xb, 0xc, 0x3, 0xa, 0x1]).is_err());
     }
 }

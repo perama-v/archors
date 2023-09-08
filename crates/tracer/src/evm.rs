@@ -2,18 +2,17 @@
 
 use std::io::stdout;
 
+use archors_types::utils::{
+    access_list_e_to_r, eu256_to_ru256, eu256_to_u64, eu64_to_ru256, ru256_to_u64, UtilsError,
+};
 use ethers::types::{Block, Transaction};
 use revm::{
     db::{CacheDB, EmptyDB},
-    inspectors::TracerEip3155,
-    primitives::{EVMError, ExecutionResult, TransactTo, U256},
+    inspectors::{NoOpInspector, TracerEip3155},
+    primitives::{EVMError, ResultAndState, TransactTo, U256},
     EVM,
 };
 use thiserror::Error;
-
-use crate::utils::{
-    access_list_e_to_r, eu256_to_ru256, eu256_to_u64, eu64_to_ru256, ru256_to_u64, UtilsError,
-};
 
 /// An error with tracing a block
 #[derive(Debug, Error, PartialEq)]
@@ -119,28 +118,42 @@ impl BlockEvm {
         Ok(self)
     }
     /// Execute a loaded transaction with an inspector to produce an EIP-3155 style trace.
+    /// Runs the transaction twice (once for state change, once to commit).
     ///
     /// This applies the transaction, monitors the output and leaves the EVM ready for the
     /// next transaction to be added.
-    pub fn execute_with_inspector_eip3155(&mut self) -> Result<ExecutionResult, EvmError> {
+    pub fn execute_with_inspector_eip3155(&mut self) -> Result<ResultAndState, EvmError> {
         self.tx_env_status.ready_to_execute()?;
+        // Run the tx to get the state changes, but don't commit to the EVM env yet.
+        // The changes will be used to compute the post-tx state root.
+        // Use a dummy inspector.
+        let noop_inspector = NoOpInspector {};
+        let state_changes = self.evm.inspect_ref(noop_inspector)?;
+
+        // Now run the tx again and this time commit the changes.
+        // see: https://github.com/bluealloy/revm/blob/main/bins/revme/src/statetest/runner.rs#L259
         // Initialize the inspector
         let inspector = TracerEip3155::new(Box::new(stdout()), true, true);
-
-        // see: https://github.com/bluealloy/revm/blob/main/bins/revme/src/statetest/runner.rs#L259
-        let outcome = self.evm.inspect_commit(inspector).map_err(EvmError::from)?;
+        let _outcome = self.evm.inspect_commit(inspector).map_err(EvmError::from)?;
         self.tx_env_status.executed()?;
-        Ok(outcome)
+        Ok(state_changes)
     }
     /// Execute a loaded transaction without an inspector.
     ///
     /// This applies the transaction and leaves the EVM ready for the
     /// next transaction to be added.
-    pub fn execute_without_inspector(&mut self) -> Result<ExecutionResult, EvmError> {
+    pub fn execute_without_inspector(&mut self) -> Result<ResultAndState, EvmError> {
         self.tx_env_status.ready_to_execute()?;
-        let outcome = self.evm.transact_commit().map_err(EvmError::from)?;
+        // Run the tx to get the state changes, but don't commit to the EVM env yet.
+        // The changes will be used to compute the post-tx state root.
+        // Use a dummy inspector.
+        let noop_inspector = NoOpInspector {};
+        let state_changes = self.evm.inspect_ref(noop_inspector)?;
+
+        // Now run the tx again, this time to commit the changes.
+        let _outcome = self.evm.transact_commit().map_err(EvmError::from)?;
         self.tx_env_status.executed()?;
-        Ok(outcome)
+        Ok(state_changes)
     }
 }
 

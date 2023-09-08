@@ -1,4 +1,4 @@
-//! For verifying a Merkle Patricita Proof for arbitrary proof values.
+//! For verifying a Merkle Patricia Proof for arbitrary proof values.
 //! E.g., Account, storage ...
 use ethers::{types::Bytes, utils::keccak256};
 use hex::FromHexError;
@@ -62,7 +62,7 @@ pub enum ProofError {
 
 /// A proof for some data in a Merkle Patricia Tree, such as an account, or a storage value.
 #[derive(Default, Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct SingleProof {
+pub struct SingleProofPath {
     /// Merkle PATRICIA trie proof for a key/value.
     pub proof: Vec<Bytes>,
     /// Trusted root that the proof anchors to.
@@ -73,7 +73,7 @@ pub struct SingleProof {
     pub claimed_value: Vec<u8>,
 }
 
-impl SingleProof {
+impl SingleProofPath {
     pub fn verify(&self) -> Result<Verified, ProofError> {
         if self.proof.is_empty() {
             return Err(ProofError::EmptyProof);
@@ -102,7 +102,7 @@ impl SingleProof {
     }
 }
 
-/// THe verification kind is returned to the caller.
+/// The verification kind is returned to the caller.
 ///
 /// An exclusion proof for a key does not contain information about the value
 /// of that key. The caller can make an assessment if the value for an

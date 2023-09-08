@@ -1,17 +1,19 @@
 [package]
-name = "archors_tracer"
+name = "archors_multiproof"
 version = "0.1.0"
 edition = "2021"
-description = "Tool for tracing an Ethereum block using state from EIP-1186 proofs"
+description = "Tool for working with EIP-1186 as multiproofs that cover a single block state"
+
 
 [dependencies]
+archors_verify = { path = "../verify" }
 archors_types = { path = "../types" }
 ethers = "2.0.4"
 hex = "0.4.3"
+log = { workspace = true}
 revm = { path = "../../../revm/crates/revm", features = ["serde"] }
+rlp = "0.5.2"
+rlp-derive = "0.1.0"
 serde = { version = "1.0.152", features = ["derive"] }
 serde_json = "1.0.94"
 thiserror = "1.0.40"
-
-[dev-dependencies]
-archors_inventory = { path = "../inventory" }

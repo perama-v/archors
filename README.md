@@ -89,8 +89,8 @@ node must provide both:
 |6|inventory|measure data overlap between proofs for different blocks|
 |7|inventory|collect stats on bytes/gas for proofs|
 |8|verify|verify merkle proof for block|
-|9|tracer|locally produce `debug_traceTransaction` / `debug_traceBlock` using proof data|
-|10|inventory|obtain required state in one pass|
+|9|inventory|obtain required state in one pass|
+|10|tracer|locally produce `debug_traceTransaction` / `debug_traceBlock` using proof data|
 
 ### Binary: Interpret
 
@@ -374,7 +374,7 @@ However this will only apply to anterograde (post-verkle-fork) blocks.
 What does tracing get you? Every step in the EVM.
 
 ```command
-cargo run --release --example 07_use_proof |  grep '"REVERT"' | jq
+cargo run --release --example 10_use_proof_to_trace |  grep '"REVERT"' | jq
 ```
 This example is set to trace transaction index 14 in block 17190873. The
 result is filtered to only include steps that involved a `REVERT` opcode.

@@ -19,8 +19,8 @@ If there is a data source of these proofs, then you could trace individual block
 
 ## How
 
-First verify the proof data (see archors-verify) against the block state root.
-Then, start executing the first transaction.
+First verify the proof data (see archors-verify) against the block state root present
+in the previous header. Then, start executing the first transaction.
 
 Each time the EVM needs access to state (E.g., storage load via `SLOAD` for some key),
 look up the key in the proof data and get the value there.

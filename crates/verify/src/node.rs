@@ -146,19 +146,33 @@ impl NodeKind {
                         *parent_root_to_update = next_root;
                         Ok(ProofType::Pending)
                     }
-                    PathNature::SubPathDiverges | PathNature::FullPathDiverges => {
+                    PathNature::SubPathDiverges(_) => {
+                        if next_node.is_empty() {
+                            todo!("Even in an exclusion proof, shouldn't there be a next node?")
+                            // return Err(NodeError::ExclusionProofNodeHasNoNextNode);
+                        }
+
                         Ok(ProofType::ExtensionExclusion)
                     }
-                    PathNature::FullPathMatches => Err(NodeError::TraversalEndsAtExtension),
+                    PathNature::FullPathMatches | PathNature::FullPathDiverges(_) => {
+                        Err(NodeError::TerminalExtensionHasFullPath)
+                    }
                 }
             }
             NodeKind::Leaf => {
                 let path = node.get(0).ok_or(NodeError::LeafHasNoPath)?;
                 let value = node.get(1).ok_or(NodeError::LeafHasNoValue)?;
                 match traversal.match_or_mismatch(path)? {
-                    PathNature::SubPathMatches => Err(NodeError::LeafHasIncompletePath),
-                    PathNature::FullPathMatches => Ok(ProofType::Inclusion(value.to_vec())),
-                    PathNature::FullPathDiverges | PathNature::SubPathDiverges => {
+                    PathNature::SubPathMatches | PathNature::SubPathDiverges(_) => {
+                        Err(NodeError::LeafHasIncompletePath)
+                    }
+                    PathNature::FullPathMatches => {
+                        if value.is_empty() {
+                            todo!("an inclusion proof cannot have empty leaf value");
+                        }
+                        Ok(ProofType::Inclusion(value.to_vec()))
+                    }
+                    PathNature::FullPathDiverges(_) => {
                         // The node is a leaf, but not the leaf that matches the key.
                         // This means the trie cannot contain the key, otherwise this
                         // node would be a branch or extension. Hence it is an exclusion

@@ -80,7 +80,7 @@ pub async fn store_block_with_transactions(url: &str, target_block: u64) -> Resu
         .await?;
 
     let Some(block_number) = block.result.number else {
-        return Err(CacheError::NoBlockNumber)
+        return Err(CacheError::NoBlockNumber);
     };
     let names = CacheFileNames::new(block_number.as_u64());
     fs::create_dir_all(names.dirname())?;
