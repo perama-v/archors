@@ -23,6 +23,14 @@ use crate::{
 
 #[derive(Debug, Error)]
 pub enum MultiProofError {
+    #[error("Unable to update account proof for address{address}: {source}")]
+    AccountProofError { source: ProofError, address: String },
+    #[error("Unable to update storage proof for address {address}, key {key}: {source}")]
+    StorageProofError {
+        source: ProofError,
+        address: String,
+        key: String,
+    },
     #[error("ProofError {0}")]
     ProofError(#[from] ProofError),
     #[error("UtilsError {0}")]
@@ -113,18 +121,21 @@ impl EIP1186MultiProof {
         slot_key: U256,
         slot_value: U256,
     ) -> Result<H256, MultiProofError> {
-        let path = keccak256(&ru256_to_eh256(slot_key));
-        let slot_rlp = rlp::encode(&slot_value).to_vec();
-        let slot_node = match slot_rlp.len() < 32 {
-            true => slot_rlp,
-            false => keccak256(&slot_rlp).to_vec(),
-        };
-        let intent = Intent::Modify(slot_node);
+        let key = ru256_to_eh256(slot_key);
+        let path = keccak256(&key);
+        let slot_item = slot_rlp_from_value(slot_value);
+        let intent = Intent::Modify(slot_item);
         let proof = self
             .storage_proofs
             .get_mut(&rb160_to_eh160(address))
             .ok_or_else(|| MultiProofError::NoAccount(format!("{}", hex_encode(address))))?;
-        proof.traverse(H256::from(path), &intent)?;
+        proof.traverse(H256::from(path), &intent).map_err(|e| {
+            MultiProofError::StorageProofError {
+                source: e,
+                address: hex_encode(address),
+                key: hex_encode(key),
+            }
+        })?;
         Ok(proof.root)
     }
 
@@ -137,8 +148,12 @@ impl EIP1186MultiProof {
     ) -> Result<H256, MultiProofError> {
         let path = keccak256(address);
         let intent = Intent::Modify(account.rlp_bytes().into());
-
-        self.account_proofs.traverse(path.into(), &intent)?;
+        self.account_proofs
+            .traverse(path.into(), &intent)
+            .map_err(|e| MultiProofError::AccountProofError {
+                source: e,
+                address: hex_encode(address),
+            })?;
         Ok(self.current_state_root())
     }
     /// Accepts all changes for a single account returned from REVM and returns the
@@ -161,7 +176,6 @@ impl EIP1186MultiProof {
             .ok_or_else(|| MultiProofError::NoAccount(hex_encode(address)))?
             .clone();
         let mut storage_hash = existing_account.storage_hash;
-
         for (key, slot) in account_updates.storage {
             storage_hash = self.update_storage_proof(address, key, slot.present_value)?
         }
@@ -183,6 +197,20 @@ impl EIP1186MultiProof {
     /// root.
     pub fn check_every_key() -> Result<(), MultiProofError> {
         todo!()
+    }
+}
+
+/// A slot value is stored differently depending on size of the RLP of the value.
+/// - short: store RLP of the value
+/// - long: store the hash of the RLP of the value.
+///
+/// See yellow paper (205).
+pub fn slot_rlp_from_value(slot_value: U256) -> Vec<u8> {
+    let trimmed = slot_value.to_be_bytes_trimmed_vec();
+    let slot_rlp = rlp::encode(&trimmed).to_vec();
+    match slot_rlp.len() < 32 {
+        true => slot_rlp,                       // rlp(val)
+        false => keccak256(&slot_rlp).to_vec(), // sha(rlp(val))
     }
 }
 
@@ -257,7 +285,7 @@ impl StateForEvm for EIP1186MultiProof {
     ) -> Result<B256, EvmStateError> {
         // Sort by address for debugging reliability.
         let mut changes: Vec<(B160, Account)> = changes.into_iter().collect();
-        changes.sort_by_key(|x|x.0);
+        changes.sort_by_key(|x| x.0);
         let mut root = self.account_proofs.root;
         let total = changes.len() - 1;
         for (index, (address, account_updates)) in changes.into_iter().enumerate() {
@@ -275,11 +303,12 @@ mod test {
     use std::{collections::HashMap, fs::File, io::BufReader, str::FromStr};
 
     use super::*;
+    use archors_verify::path::{nibbles_to_prefixed_bytes, NibblePath, TargetNodeEncoding};
     use ethers::types::H256;
 
     use revm::primitives::{AccountStatus, HashMap as rHashMap, StorageSlot};
 
-    use crate::{utils::hex_decode, EIP1186MultiProof};
+    use crate::{proof::Node, utils::hex_decode, EIP1186MultiProof};
     fn load_proof(path: &str) -> EIP1186MultiProof {
         let file = File::open(&path).expect(&format!("no proof found at {}", path));
         let reader = BufReader::new(&file);
@@ -363,29 +392,31 @@ mod test {
         assert_eq!(post_root, state_root);
     }
 
-    /// Check that the trie update mechanism works for a basic nonce increment.
-    ///
-    /// Account proof with nonce = 1
-    /// "0xf8718080808080a0a2bd2175aed7ed88ed854c914fab94115c092ffb3c3c2ef647b70b7e73e3345880a0457ae8d978cd387f5332f978f5653226588b6cc76a355fc5977cd4325ffcff78a0c4bdbdbb240f8343b7f84bc83d4b7426e803a914138792d1e369907be8098b2d8080808080808080",
-    /// "0xf869a0335649db80be637d281db0cc5896b0ff9869d08379a80fdc38dd073bba633949b846f8440101a08afc95b7d18a226944b9c2070b6bda1c3a36afcc3730429d47579c94b9fe5850a0ce92c756baff35fa740c3557c1a971fd24d2d35b7c8e067880d50cd86bb0bc99"
-    ///
-    /// New account RLP (printed above). f8440101a0.. -> f8440201a0...
-    /// 0xf8440201a08afc95b7d18a226944b9c2070b6bda1c3a36afcc3730429d47579c94b9fe5850a0ce92c756baff35fa740c3557c1a971fd24d2d35b7c8e067880d50cd86bb0bc99
-    ///
-    /// Manually insert new RLP to final node:
-    /// Account proof with nonce = 2
-    /// "0xf869a0335649db80be637d281db0cc5896b0ff9869d08379a80fdc38dd073bba633949b846f8440201a08afc95b7d18a226944b9c2070b6bda1c3a36afcc3730429d47579c94b9fe5850a0ce92c756baff35fa740c3557c1a971fd24d2d35b7c8e067880d50cd86bb0bc99"
-    ///
-    /// Hash of new final node:
-    /// d1e13c77cfc77c181e6c8d0e7a3fe3529368bb36cacc67da80f0b453b03f3617
-    ///
-    /// Update the first proof node by replacing 457a...ff78 with above hash
-    ///
-    /// new first node: "0xf8718080808080a0a2bd2175aed7ed88ed854c914fab94115c092ffb3c3c2ef647b70b7e73e3345880a0d1e13c77cfc77c181e6c8d0e7a3fe3529368bb36cacc67da80f0b453b03f3617a0c4bdbdbb240f8343b7f84bc83d4b7426e803a914138792d1e369907be8098b2d8080808080808080",
-    ///
-    /// Hash of new first node (new state root):
-    /// 441ad37ef009dbf8cd6830845d658e58c6a6620172de4e93daef90352f284de1
-    ///
+    /**
+    Check that the trie update mechanism works for a basic nonce increment.
+
+    Account proof with nonce = 1
+    "0xf8718080808080a0a2bd2175aed7ed88ed854c914fab94115c092ffb3c3c2ef647b70b7e73e3345880a0457ae8d978cd387f5332f978f5653226588b6cc76a355fc5977cd4325ffcff78a0c4bdbdbb240f8343b7f84bc83d4b7426e803a914138792d1e369907be8098b2d8080808080808080",
+    "0xf869a0335649db80be637d281db0cc5896b0ff9869d08379a80fdc38dd073bba633949b846f8440101a08afc95b7d18a226944b9c2070b6bda1c3a36afcc3730429d47579c94b9fe5850a0ce92c756baff35fa740c3557c1a971fd24d2d35b7c8e067880d50cd86bb0bc99"
+
+    New account RLP (printed above). f8440101a0.. -> f8440201a0...
+    0xf8440201a08afc95b7d18a226944b9c2070b6bda1c3a36afcc3730429d47579c94b9fe5850a0ce92c756baff35fa740c3557c1a971fd24d2d35b7c8e067880d50cd86bb0bc99
+
+    Manually insert new RLP to final node:
+    Account proof with nonce = 2
+    "0xf869a0335649db80be637d281db0cc5896b0ff9869d08379a80fdc38dd073bba633949b846f8440201a08afc95b7d18a226944b9c2070b6bda1c3a36afcc3730429d47579c94b9fe5850a0ce92c756baff35fa740c3557c1a971fd24d2d35b7c8e067880d50cd86bb0bc99"
+
+    Hash of new final node:
+    d1e13c77cfc77c181e6c8d0e7a3fe3529368bb36cacc67da80f0b453b03f3617
+
+    Update the first proof node by replacing 457a...ff78 with above hash
+
+    new first node: "0xf8718080808080a0a2bd2175aed7ed88ed854c914fab94115c092ffb3c3c2ef647b70b7e73e3345880a0d1e13c77cfc77c181e6c8d0e7a3fe3529368bb36cacc67da80f0b453b03f3617a0c4bdbdbb240f8343b7f84bc83d4b7426e803a914138792d1e369907be8098b2d8080808080808080",
+
+    Hash of new first node (new state root):
+    441ad37ef009dbf8cd6830845d658e58c6a6620172de4e93daef90352f284de1
+
+    */
     #[test]
     fn test_root_after_account_nonce_increment() {
         // Manually computed the new state root.
@@ -423,7 +454,125 @@ mod test {
             .apply_account_delta(&B160::from_str(address).unwrap(), account_updates)
             .unwrap();
         // Check the computed root matches the manual calcuation.
-        assert_eq!(post_root, H256::from_str("441ad37ef009dbf8cd6830845d658e58c6a6620172de4e93daef90352f284de1").unwrap());
+        assert_eq!(
+            post_root,
+            H256::from_str("441ad37ef009dbf8cd6830845d658e58c6a6620172de4e93daef90352f284de1")
+                .unwrap()
+        );
+    }
+    /**
+    Checks that the manually computed storage root matches the computed root after
+    changing a storage slot value.
+
+    Key: 0x000...001
+    Key path (hash of key): b10e2d527612073b26eecdfd717e6a320cf44b4afac2b0732d9fcbe2b7fa0cf6
+
+    Storage node: 0xf871808080a0ce028e108cf5c832b0a9afd3ed101183857b3b9ddaea5670c4f09b62e4d38d05a0de3ecad66628a5743ed089e3a35ebeedc25a922fb0ac346304613403911c18e0a0128c5f7abac505794cda09bde44d143e4736b50b1c42d6807a989c10af51e8d18080808080808080808080
+
+    The storage node has 3 items, in positions 0x3, 0x4, 0x5. Position 0xb is free, and this is where the leaf node will be added.
+
+    Leaf path (trim the 0xb): 10e2d527612073b26eecdfd717e6a320cf44b4afac2b0732d9fcbe2b7fa0cf6
+    Hex-prefixed path (odd leaf = prefix with 3): 310e2d527612073b26eecdfd717e6a320cf44b4afac2b0732d9fcbe2b7fa0cf6
+
+    Leaf value = 0x7
+    Leaf RLP node = 0xe2a0<path><value> = 0xe2a0310e2d527612073b26eecdfd717e6a320cf44b4afac2b0732d9fcbe2b7fa0cf607
+    Leaf hash = 4784fb4f62cc58a00b3ae50ff62c0a3672be2328c21840707284bb09a77ca21a
+
+    first storage node = 0xf891808080a0ce028e108cf5c832b0a9afd3ed101183857b3b9ddaea5670c4f09b62e4d38d05a0de3ecad66628a5743ed089e3a35ebeedc25a922fb0ac346304613403911c18e0a0128c5f7abac505794cda09bde44d143e4736b50b1c42d6807a989c10af51e8d18080808080a04784fb4f62cc58a00b3ae50ff62c0a3672be2328c21840707284bb09a77ca21a8080808080
+
+    new storage hash = 41d1b06c8a131d1ba094d9157054358df40085906ef614437cbad8a5cd233fe2
+
+    new account rlp = 0xf8440101a041d1b06c8a131d1ba094d9157054358df40085906ef614437cbad8a5cd233fe2a0ce92c756baff35fa740c3557c1a971fd24d2d35b7c8e067880d50cd86bb0bc99
+
+    old account leaf node = 0xf869a0335649db80be637d281db0cc5896b0ff9869d08379a80fdc38dd073bba633949b846 f8440101a08afc95b7d18a226944b9c2070b6bda1c3a36afcc3730429d47579c94b9fe5850a0ce92c756baff35fa740c3557c1a971fd24d2d35b7c8e067880d50cd86bb0bc99
+
+    new account leaf node = 0xf869a0335649db80be637d281db0cc5896b0ff9869d08379a80fdc38dd073bba633949b846f8440101a041d1b06c8a131d1ba094d9157054358df40085906ef614437cbad8a5cd233fe2a0ce92c756baff35fa740c3557c1a971fd24d2d35b7c8e067880d50cd86bb0bc99
+
+    new account leaf hash = fad62b0aae498bcbac391cfb2ae7283eb9ec8f8c2bc283d26063bfa216e6207a
+
+    old account proof first node = 0xf8718080808080a0a2bd2175aed7ed88ed854c914fab94115c092ffb3c3c2ef647b70b7e73e3345880a0457ae8d978cd387f5332f978f5653226588b6cc76a355fc5977cd4325ffcff78a0c4bdbdbb240f8343b7f84bc83d4b7426e803a914138792d1e369907be8098b2d8080808080808080
+
+    new account proof first node = 0xf8718080808080a0a2bd2175aed7ed88ed854c914fab94115c092ffb3c3c2ef647b70b7e73e3345880a0fad62b0aae498bcbac391cfb2ae7283eb9ec8f8c2bc283d26063bfa216e6207aa0c4bdbdbb240f8343b7f84bc83d4b7426e803a914138792d1e369907be8098b2d8080808080808080
+
+    new root hash = 388e66d9a17f8ac62cc95d24d5842e587fd92b55fd31ccb67b0e16a96adc746f
+
+    */
+    #[test]
+    fn test_root_after_storage_change() {
+        // 3 empty, 3 full, new at 0xb.
+        let _node = Node::try_from(vec![
+            vec![],
+            vec![],
+            vec![],
+            hex_decode("ce028e108cf5c832b0a9afd3ed101183857b3b9ddaea5670c4f09b62e4d38d05").unwrap(),
+            hex_decode("de3ecad66628a5743ed089e3a35ebeedc25a922fb0ac346304613403911c18e0").unwrap(),
+            hex_decode("128c5f7abac505794cda09bde44d143e4736b50b1c42d6807a989c10af51e8d1").unwrap(),
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            // new leaf hash at 0xb
+            hex_decode("fad62b0aae498bcbac391cfb2ae7283eb9ec8f8c2bc283d26063bfa216e6207a").unwrap(),
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+        ])
+        .unwrap();
+        // println!("new storage {}", hex_encode(node.to_rlp_list()));
+        // Manually computed the new state root.
+        let _account = AccountData {
+            nonce: U64::from_str("0x1").unwrap(),
+            balance: U256::from_str("0x1").unwrap(),
+            // updated
+            storage_hash: H256::from_str(
+                "0x41d1b06c8a131d1ba094d9157054358df40085906ef614437cbad8a5cd233fe2",
+            )
+            .unwrap(),
+            code_hash: H256::from_str(
+                "0xce92c756baff35fa740c3557c1a971fd24d2d35b7c8e067880d50cd86bb0bc99",
+            )
+            .unwrap(),
+        };
+        // println!("new acc rlp: {}", hex_encode(account.rlp_bytes()));
+
+        // Slot changed from 0x0 (exclusion proof) to 0x7 (inclusion proof).
+        let mut storage = rHashMap::default();
+        storage.insert(
+            U256::from_str("0x0000000000000000000000000000000000000000000000000000000000000001")
+                .unwrap(),
+            StorageSlot {
+                original_value: U256::from_str("0x0").unwrap(),
+                present_value: U256::from_str("0x7").unwrap(),
+            },
+        );
+        let account_updates = Account {
+            info: AccountInfo {
+                balance: U256::from_str("1").unwrap(),
+                nonce: 1u64,
+                code_hash: B256::from_str(
+                    "0xce92c756baff35fa740c3557c1a971fd24d2d35b7c8e067880d50cd86bb0bc99",
+                )
+                .unwrap(),
+                code: None,
+            },
+            storage, // updated
+            status: AccountStatus::default(),
+        };
+        let mut proof = load_proof_str(PROOF_1);
+        let address = "aa00000000000000000000000000000000000000";
+        // Use the update function to compute the new root.
+        let post_root = proof
+            .apply_account_delta(&B160::from_str(address).unwrap(), account_updates)
+            .unwrap();
+        // Check the computed root matches the manual calcuation.
+        assert_eq!(
+            post_root,
+            H256::from_str("388e66d9a17f8ac62cc95d24d5842e587fd92b55fd31ccb67b0e16a96adc746f")
+                .unwrap()
+        );
     }
     #[test]
     fn test_root_unchanged_after_no_update_to_account_2() {
@@ -473,8 +622,44 @@ mod test {
         // Check that the root is the same (no changes were made).
         assert_eq!(post_root, state_root);
     }
+
     #[test]
-    fn test_root_after_storage_change() {
-        todo!()
+    fn test_slot_rlp_from_value() {
+        // Short U256 is stored as U256
+        assert_eq!(slot_rlp_from_value(U256::from(3)), vec![0x3]);
+
+        // Long U256 is stored as sha(rlp(U256))
+        let big_val =
+            U256::from_str("0x2cfdfbdd943ec0153ed07b97f03eb765dc11cc79c6f750effcc2d126f93c4b31")
+                .unwrap();
+        let rlp = rlp::encode(&big_val);
+        let hash = keccak256(rlp);
+        assert_eq!(slot_rlp_from_value(big_val), hash.to_vec());
+    }
+
+    #[test]
+    fn test_construct_leaf_value() {
+        // Source: test_proof_3.json
+        let key =
+            U256::from_str("0x0000000000000000000000000000000000000000000000000000000000000008")
+                .unwrap();
+        let value = U256::from_str("0x71afd498d00028de4544dd705613413f88").unwrap();
+        let path = NibblePath::init(&keccak256(key.to_be_bytes_vec()));
+        let prefixed_leaf_path = path
+            .get_encoded_path(TargetNodeEncoding::Leaf, 3, 63)
+            .unwrap();
+        assert_eq!(
+            hex_encode(&prefixed_leaf_path),
+            "0x37a9fe364faab93b216da50a3214154f22a0a2b415b23a84c8169e8b636ee3"
+        );
+        let leaf_value = slot_rlp_from_value(value);
+        assert_eq!(
+            hex_encode(&leaf_value),
+            "0x9171afd498d00028de4544dd705613413f88"
+        );
+        let leaf = Node::try_from(vec![prefixed_leaf_path, leaf_value])
+            .unwrap()
+            .to_rlp_list();
+        assert_eq!(hex_encode(leaf), "0xf39f37a9fe364faab93b216da50a3214154f22a0a2b415b23a84c8169e8b636ee3929171afd498d00028de4544dd705613413f88");
     }
 }

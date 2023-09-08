@@ -138,7 +138,7 @@ fn verify_account_storage_component(
 
     let rlp_value = rlp::encode(&storage_proof.value).to_vec();
     /*
-    // TODO: Use the below code. See yellow paper (205).
+    // TODO: Use ./multiproof/src/eip1186::slot_rlp_from_value(). See yellow paper (205).
     let claimed_value = match rlp_value.len() < 32 {
         true => rlp_value,
         false => keccak256(rlp_value).to_vec(),

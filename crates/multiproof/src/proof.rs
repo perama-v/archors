@@ -1,7 +1,7 @@
 //! For verifying a Merkle Patricia Multi Proof for arbitrary proof values.
 //! E.g., Account, storage ...
 
-use std::{collections::HashMap, str::FromStr};
+use std::{collections::HashMap, str::FromStr, fmt::Display};
 
 use archors_verify::{
     eip1186::Account,
@@ -149,14 +149,6 @@ impl MultiProof {
                 .get(&next_node_hash)
                 .ok_or(ProofError::NoNodeForHash(hex_encode(next_node_hash)))?;
             let next_node: Vec<Vec<u8>> = rlp::decode_list(next_node_rlp);
-            if next_node_hash == H256::from_str("0x8188608e9e200b077a0e85538ea1de3c1c38f5c9f42732f4057993d03f9a3aaa").unwrap() {
-                println!("hash match");
-                println!("{:?}", traversal);
-                for visited in &visited_nodes {
-                    println!("{:?}, hash {}", visited, hex_encode(visited.node_hash));
-                }
-            }
-            // println!("traversing node {} with hash {}", hex_encode(next_node_rlp), hex_encode(next_node_hash));
             match NodeKind::deduce(&next_node)? {
                 kind @ NodeKind::Branch => {
                     let traversal_record = traversal.clone();
@@ -297,6 +289,8 @@ impl MultiProof {
         }
     }
     /// Updates the multiproof and modifies the proof structure if needed.
+    /// The traversal has finished and starting from the leaf/branch end, the
+    /// nodes are changed, all the way up to the root.
     ///
     /// May involve changing between inclusion and exclusion proofs for a
     /// value, and associated removal or addition of nodes.
@@ -791,7 +785,7 @@ impl MultiProof {
 
 /// A merkle patricia trie node at any level/height of an account proof.
 #[derive(Default, Debug, Clone, PartialEq, Eq, Deserialize)]
-struct Node(Vec<Item>);
+pub struct Node(Vec<Item>);
 
 impl TryFrom<Vec<Vec<u8>>> for Node {
 
@@ -811,7 +805,7 @@ impl Node {
     /// The items in the node are assumed to already be RLP-encoded if required.
     /// For example, a leaf node consists of two items: [path, rlp_value], where
     /// the rlp_value is already encoded.
-    fn to_rlp_list(self) -> Vec<u8> {
+    pub fn to_rlp_list(self) -> Vec<u8> {
         let len = self.0.len();
         let mut rlp = RlpStream::new_list(len);
         for item in self.0 {
@@ -863,6 +857,12 @@ struct VisitedNode {
     ///
     /// This allows new nodes to be added/removed as needed during proof modification.
     traversal_record: NibblePath,
+}
+
+impl Display for VisitedNode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Visited {:?} node (hash: {}), followed index {} in node", self.kind, hex_encode(self.node_hash), self.item_index)
+    }
 }
 
 /// The action to take when traversing a proof path.
