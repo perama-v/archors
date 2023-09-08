@@ -1,17 +1,21 @@
 //! For verifying a Merkle Patricia Multi Proof for arbitrary proof values.
 //! E.g., Account, storage ...
 
-use std::collections::HashMap;
+use std::{collections::HashMap, str::FromStr};
 
-use archors_verify::path::{
-    nibbles_to_prefixed_bytes, prefixed_bytes_to_nibbles, NibblePath, PathError, PathNature,
-    PrefixEncoding, TargetNodeEncoding,
+use archors_verify::{
+    eip1186::Account,
+    path::{
+        nibbles_to_prefixed_bytes, prefixed_bytes_to_nibbles, NibblePath, PathError, PathNature,
+        PrefixEncoding, TargetNodeEncoding,
+    },
 };
 use ethers::{
-    types::{Bytes, H256},
+    types::{Bytes, H256, U256},
     utils::keccak256,
 };
-use rlp::Encodable;
+use log::debug;
+use rlp::{Encodable, RlpStream};
 use rlp_derive::{RlpDecodable, RlpEncodable};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -37,12 +41,12 @@ pub enum ProofError {
     NodeEmpty,
     #[error("Node item has no encoding")]
     NoEncoding,
-    #[error("Unable to retrieve node using node hash")]
-    NoNodeForHash,
+    #[error("Unable to retrieve node using node hash {0}")]
+    NoNodeForHash(String),
     #[error("PathError {0}")]
     PathError(#[from] PathError),
-    #[error("Node has invalid item count")]
-    NodeHasInvalidItemCount,
+    #[error("Node has invalid item count {0}")]
+    NodeHasInvalidItemCount(usize),
     #[error("Leaf node has no final path to traverse")]
     LeafHasNoFinalPath,
     #[error("An inclusion proof was required, but found an exclusion proof")]
@@ -143,9 +147,16 @@ impl MultiProof {
             let next_node_rlp = self
                 .data
                 .get(&next_node_hash)
-                .ok_or(ProofError::NoNodeForHash)?;
+                .ok_or(ProofError::NoNodeForHash(hex_encode(next_node_hash)))?;
             let next_node: Vec<Vec<u8>> = rlp::decode_list(next_node_rlp);
-
+            if next_node_hash == H256::from_str("0x8188608e9e200b077a0e85538ea1de3c1c38f5c9f42732f4057993d03f9a3aaa").unwrap() {
+                println!("hash match");
+                println!("{:?}", traversal);
+                for visited in &visited_nodes {
+                    println!("{:?}, hash {}", visited, hex_encode(visited.node_hash));
+                }
+            }
+            // println!("traversing node {} with hash {}", hex_encode(next_node_rlp), hex_encode(next_node_hash));
             match NodeKind::deduce(&next_node)? {
                 kind @ NodeKind::Branch => {
                     let traversal_record = traversal.clone();
@@ -232,7 +243,8 @@ impl MultiProof {
                         item_index: 1,
                         traversal_record,
                     });
-                    match (traversal.match_or_mismatch(final_subpath)?, intent) {
+                    let traversal_status = traversal.match_or_mismatch(final_subpath)?;
+                    match (traversal_status, intent) {
                         (SubPathMatches | SubPathDiverges(_), _) => {
                             return Err(ProofError::LeafPathIncomplete)
                         }
@@ -304,9 +316,14 @@ impl MultiProof {
             .remove(&old_terminal_hash)
             .ok_or(ModifyError::NoNodeForHash)?;
         let mut old_node: Vec<Vec<u8>> = rlp::decode_list(&old_node_rlp);
-
         match change {
             Change::BranchExclusionToInclusion(new_leaf_rlp_value) => {
+                if is_empty_value(&new_leaf_rlp_value) {
+                    // Detect if an inclusion conversion was requested on a null value.
+                    // Put the node back.
+                    self.data.insert(old_terminal_hash, old_node_rlp);
+                    return Ok(());
+                }
                 // Main concept: Add leaf to the previously terminal branch.
                 // As an exclusion proof there is no other key that overlaps this path part,
                 // so no extension node is needed.
@@ -321,8 +338,8 @@ impl MultiProof {
                     leaf_path_start,
                     63,
                 )?;
-                let leaf_node = Node::from(vec![leaf_path, new_leaf_rlp_value]);
-                let leaf_node_rlp = leaf_node.rlp_bytes();
+                let leaf_node = Node::try_from(vec![leaf_path, new_leaf_rlp_value])?;
+                let leaf_node_rlp = leaf_node.to_rlp_list();
                 let leaf_node_hash = keccak256(&leaf_node_rlp);
                 // Store leaf node
                 self.data
@@ -332,10 +349,10 @@ impl MultiProof {
                     .get_mut(branch_item_index)
                     .ok_or(ModifyError::BranchTooShort)?;
                 *leaf_parent = leaf_node_hash.to_vec();
-                let updated_branch_node: Node = Node::from(old_node);
+                let updated_branch_node: Node = Node::try_from(old_node)?;
 
                 // Update the rest (starting from parents of the branch, ending at the root)
-                let mut updated_hash = keccak256(&updated_branch_node.rlp_bytes());
+                let mut updated_hash = keccak256(&updated_branch_node.to_rlp_list());
                 for outdated in visited.iter().rev().skip(1) {
                     updated_hash = self.update_node_with_child_hash(outdated, &updated_hash)?;
                 }
@@ -345,6 +362,12 @@ impl MultiProof {
                 new_value,
                 divergent_nibble_index,
             } => {
+                if is_empty_value(&new_value) {
+                    // Detect if an inclusion conversion was requested on a null value.
+                    // Put the node back.
+                    self.data.insert(old_terminal_hash, old_node_rlp);
+                    return Ok(());
+                }
                 // Main concept: Exclusion proof to inclusion proof by adding a leaf.
                 // An extension is required if the extension has something
                 // in common with the new leaf path.
@@ -374,6 +397,12 @@ impl MultiProof {
                 new_value,
                 divergent_nibble_index,
             } => {
+                if is_empty_value(&new_value) {
+                    // Detect if an inclusion conversion was requested on a null value.
+                    // Put the node back.
+                    self.data.insert(old_terminal_hash, old_node_rlp);
+                    return Ok(());
+                }
                 // Main concept: Add an extension node then a branch node and move old leaf to it.
                 // Then add new leaf node. An extension is required if
                 // the old and new leaves have multiple nibbles in common.
@@ -400,8 +429,8 @@ impl MultiProof {
             }
             Change::LeafInclusionModify(new_leaf_rlp_value) => {
                 let path = old_node.first().ok_or(ModifyError::LeafHasNoFinalPath)?;
-                let new_leaf_data = Node::from(vec![path.to_owned(), new_leaf_rlp_value]);
-                let new_leaf_rlp = new_leaf_data.rlp_bytes().to_vec();
+                let new_leaf_node = Node::try_from(vec![path.to_owned(),new_leaf_rlp_value])?;
+                let new_leaf_rlp = new_leaf_node.to_rlp_list();
                 let mut updated_hash = keccak256(&new_leaf_rlp);
 
                 // Add the new leaf.
@@ -484,11 +513,11 @@ impl MultiProof {
                     .first()
                     .ok_or(ModifyError::ExtensionHasNoPath)?;
                 // [path, next_node]
-                Node::from(vec![path.to_owned(), child_hash.to_vec()])
+                Node::try_from(vec![path.to_owned(), child_hash.to_vec()])?
             }
             NodeKind::Leaf => todo!(),
         };
-        let updated_rlp = updated_node.rlp_bytes().to_vec();
+        let updated_rlp = updated_node.to_rlp_list();
         let updated_hash = keccak256(&updated_rlp);
         self.data.insert(updated_hash.into(), updated_rlp);
         Ok(updated_hash)
@@ -529,8 +558,8 @@ impl MultiProof {
             divergent_nibble_index + 1, // leave a nibble (+1) for the branch
             63,
         )?;
-        let leaf = Node::from(vec![new_leaf_path, new_leaf_value]);
-        let leaf_rlp = leaf.rlp_bytes();
+        let leaf = Node::try_from(vec![new_leaf_path, new_leaf_value])?;
+        let leaf_rlp = leaf.to_rlp_list();
         let leaf_hash = keccak256(&leaf_rlp);
         self.data.insert(leaf_hash.into(), leaf_rlp.into());
 
@@ -546,13 +575,13 @@ impl MultiProof {
 
         // Update old node and store
         *old_node_path = nibbles_to_prefixed_bytes(updated_node_nibbles, old_node_kind)?;
-        let updated_node_rlp = Node::from(old_node).rlp_bytes();
+        let updated_node_rlp = Node::try_from(old_node)?.to_rlp_list();
         let updated_node_hash = keccak256(&updated_node_rlp);
         self.data
             .insert(updated_node_hash.into(), updated_node_rlp.into());
 
         // Make new branch and add children (modified node and new leaf).
-        let mut node_items: Vec<Vec<u8>> = (0..=17).map(|_| vec![]).collect();
+        let mut node_items: Vec<Vec<u8>> = (0..17).map(|_| vec![]).collect();
         *node_items
             .get_mut(*updated_node_index_in_branch as usize)
             .ok_or(ModifyError::BranchTooShort)? = updated_node_hash.into();
@@ -560,7 +589,7 @@ impl MultiProof {
         *node_items
             .get_mut(leaf_index as usize)
             .ok_or(ModifyError::BranchTooShort)? = leaf_hash.into();
-        let branch_rlp = Node::from(node_items).rlp_bytes();
+        let branch_rlp = Node::try_from(node_items)?.to_rlp_list();
         let branch_hash = keccak256(&branch_rlp);
         self.data.insert(branch_hash.into(), branch_rlp.into());
 
@@ -583,7 +612,7 @@ impl MultiProof {
             let common_extension_path =
                 nibbles_to_prefixed_bytes(common_nibbles, TargetNodeEncoding::Extension)?;
             let common_extension =
-                Node::from(vec![common_extension_path, branch_hash.into()]).rlp_bytes();
+                Node::try_from(vec![common_extension_path, branch_hash.into()])?.to_rlp_list();
             let common_extension_hash = keccak256(&common_extension);
             self.data
                 .insert(common_extension_hash.into(), common_extension.into());
@@ -667,7 +696,7 @@ impl MultiProof {
                             todo!()
                         }
                         _ => {
-                            let updated_rlp = updated.rlp_bytes().to_vec();
+                            let updated_rlp = updated.to_rlp_list();
                             let updated_node_hash = keccak256(&updated_rlp);
                             self.data.insert(updated_node_hash.into(), updated_rlp);
                             // No further deletions required.
@@ -682,7 +711,7 @@ impl MultiProof {
                         .first()
                         .ok_or(ModifyError::ExtensionHasNoPath)?;
                     // [path, next_node]
-                    // Node::from(vec![path.to_owned(), child_hash.to_vec()]);
+                    // Node::try_from(vec![path.to_owned(), child_hash.to_vec()])?;
 
                     todo!()
                 }
@@ -761,17 +790,39 @@ impl MultiProof {
 }
 
 /// A merkle patricia trie node at any level/height of an account proof.
-#[derive(Default, Debug, Clone, PartialEq, Eq, Deserialize, RlpEncodable, RlpDecodable)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, Deserialize)]
 struct Node(Vec<Item>);
 
-impl From<Vec<Vec<u8>>> for Node {
-    fn from(value: Vec<Vec<u8>>) -> Self {
-        Self(value.into_iter().map(Item::from).collect())
+impl TryFrom<Vec<Vec<u8>>> for Node {
+
+    type Error = ModifyError;
+
+    fn try_from(value: Vec<Vec<u8>>) -> Result<Self, Self::Error> {
+        if value.len() > 17 {
+            return Err(ModifyError::TooManyBranchItems)
+        }
+        Ok(Self(value.into_iter().map(Item::from).collect()))
+    }
+}
+
+impl Node {
+    /// Converts the node into an RLP list.
+    ///
+    /// The items in the node are assumed to already be RLP-encoded if required.
+    /// For example, a leaf node consists of two items: [path, rlp_value], where
+    /// the rlp_value is already encoded.
+    fn to_rlp_list(self) -> Vec<u8> {
+        let len = self.0.len();
+        let mut rlp = RlpStream::new_list(len);
+        for item in self.0 {
+            rlp.append(&item.0);
+        }
+        rlp.out().to_vec()
     }
 }
 
 /// A merkle patricia trie node item at any level/height of an account proof.
-#[derive(Default, Debug, Clone, PartialEq, Eq, Deserialize, RlpEncodable, RlpDecodable)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, Deserialize)]
 struct Item(Vec<u8>);
 
 impl From<Vec<u8>> for Item {
@@ -785,6 +836,7 @@ impl From<Vec<u8>> for Item {
 /// - The new rlp encoded value is required in some variants.
 /// - The new index of the nibble (range 0-63) that the excluded key shared
 /// with the existing trie is required in some exclusion proofs.
+#[derive(Debug)]
 pub enum Change {
     BranchExclusionToInclusion(Vec<u8>),
     ExtensionExclusionToInclusion {
@@ -801,6 +853,7 @@ pub enum Change {
 
 /// A cache of the nodes visited. If the trie is modified, then
 /// this can be used to update hashes back to the root.
+#[derive(Debug)]
 struct VisitedNode {
     kind: NodeKind,
     node_hash: H256,
@@ -813,6 +866,7 @@ struct VisitedNode {
 }
 
 /// The action to take when traversing a proof path.
+#[derive(Debug)]
 pub enum Intent {
     /// Change the value at the end of the path.
     Modify(Vec<u8>),
@@ -825,6 +879,7 @@ pub enum Intent {
     VerifyExclusion,
 }
 
+#[derive(Debug)]
 pub enum NodeKind {
     Branch,
     Extension,
@@ -846,7 +901,21 @@ impl NodeKind {
                     PrefixEncoding::LeafEven | PrefixEncoding::LeafOdd(_) => NodeKind::Leaf,
                 })
             }
-            _ => Err(ProofError::NodeHasInvalidItemCount),
+            num @ _ => Err(ProofError::NodeHasInvalidItemCount(num)),
         }
     }
+}
+
+/// Detects if an RLP encoded value is for an empty storage value or account.
+///
+/// This is useful to ensure that an exclusion proof has not been requested to update to this
+/// new value.
+fn is_empty_value(rlp_value: &[u8]) -> bool {
+    if rlp_value == Account::default().rlp_bytes().as_ref() {
+        return true;
+    }
+    if rlp_value == rlp::encode(&U256::default()).as_ref() {
+        return true;
+    }
+    false
 }
