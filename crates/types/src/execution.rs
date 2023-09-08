@@ -16,6 +16,8 @@ pub enum EvmStateError {
     AccountStorageInit { error: String, address: String },
     #[error("Utils Error {0}")]
     UtilsError(#[from] UtilsError),
+    #[error("Unable to verify post-execution state root: {0}")]
+    PostRoot(String),
 }
 
 /// Behaviour that any proof-based format must provide to be convertible into

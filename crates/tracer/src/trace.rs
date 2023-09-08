@@ -37,17 +37,32 @@ pub enum TraceError {
     TxWithoutIndex,
 }
 
+/// Whether after tracing a block the post-execution state root should be computed
+/// and checked against the root in the block header.
+///
+/// Some data formats that implement StateForEvm do not provide this functionality.
+pub enum RootCheck {
+    Perform,
+    Ignore,
+}
+
 /// Holds an EVM configured for single block execution.
 pub struct BlockExecutor<T: StateForEvm> {
     block_evm: BlockEvm,
     block: Block<Transaction>,
     /// Keeps block proof data up to date as transactions are applied.
     block_proof_cache: T,
+    /// Flag to check post-execution state root or not.
+    root_check: RootCheck,
 }
 
 impl<T: StateForEvm> BlockExecutor<T> {
     /// Loads the tracer so that it is ready to trace a block.
-    pub fn load(block: Block<Transaction>, block_proofs: T) -> Result<Self, TraceError> {
+    pub fn load(
+        block: Block<Transaction>,
+        block_proofs: T,
+        root_check: RootCheck,
+    ) -> Result<Self, TraceError> {
         // For all important states, load into db.
         let mut cache_db = build_state_from_proofs(&block_proofs)?;
         cache_db.block_hashes = block_proofs.get_blockhash_accesses()?;
@@ -60,6 +75,7 @@ impl<T: StateForEvm> BlockExecutor<T> {
             block_evm,
             block,
             block_proof_cache: block_proofs,
+            root_check,
         })
     }
     /// Traces a single transaction in the block.
@@ -93,12 +109,17 @@ impl<T: StateForEvm> BlockExecutor<T> {
             };
             post_block_state_delta.extend(post_tx.state);
         }
-        let expected_root = self.block.state_root;
-        let computed_root = self
-            .block_proof_cache
-            .state_root_post_block(post_block_state_delta)?;
-        post_root_ok(&expected_root, &computed_root)?;
-        Ok(())
+        match self.root_check {
+            RootCheck::Perform => {
+                let expected_root = self.block.state_root;
+                let computed_root = self
+                    .block_proof_cache
+                    .state_root_post_block(post_block_state_delta)?;
+                post_root_ok(&expected_root, &computed_root)?;
+                Ok(())
+            }
+            RootCheck::Ignore => Ok(()),
+        }
     }
     /// Traces every transaction in the block.
     pub fn trace_block(mut self) -> Result<(), TraceError> {
@@ -115,12 +136,17 @@ impl<T: StateForEvm> BlockExecutor<T> {
             // Update a proof object with state that changed after a transaction was executed.
             post_block_state_delta.extend(post_tx.state);
         }
-        let expected_root = self.block.state_root;
-        let computed_root = self
-            .block_proof_cache
-            .state_root_post_block(post_block_state_delta)?;
-        post_root_ok(&expected_root, &computed_root)?;
-        Ok(())
+        match self.root_check {
+            RootCheck::Perform => {
+                let expected_root = self.block.state_root;
+                let computed_root = self
+                    .block_proof_cache
+                    .state_root_post_block(post_block_state_delta)?;
+                post_root_ok(&expected_root, &computed_root)?;
+                Ok(())
+            }
+            RootCheck::Ignore => Ok(()),
+        }
     }
 }
 
@@ -185,7 +211,7 @@ mod test {
         };
 
         block.transactions.push(tx);
-        let executor = BlockExecutor::load(block, state).unwrap();
+        let executor = BlockExecutor::load(block, state, RootCheck::Ignore).unwrap();
         // The dummy block should not successfully execute.
         assert!(executor.trace_block().is_err());
     }

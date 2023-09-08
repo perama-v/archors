@@ -188,6 +188,8 @@ impl StateForEvm for RequiredBlockState {
     }
 
     fn state_root_post_block(self, changes: HashMap<B160, Account>) -> Result<B256, EvmStateError> {
-        todo!()
+        unimplemented!(
+            "Post execution root check is not implemented for RequiredBlockState data format."
+        )
     }
 }
