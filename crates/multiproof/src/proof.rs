@@ -330,7 +330,7 @@ impl MultiProof {
 
                 // Leaf: [remaining_path, value]
                 let traversal = &last_visited.traversal_record;
-                let branch_item_index = traversal.visiting_index() + 1;
+                let branch_item_index = traversal.nibble_at_index(traversal.visiting_index())? as usize;
                 // Remaining path is for the leaf.
                 let leaf_path_start = traversal.visiting_index() + 1;
                 let leaf_path = last_visited.traversal_record.get_encoded_path(
