@@ -122,13 +122,13 @@ impl EIP1186MultiProof {
         slot_value: U256,
     ) -> Result<H256, MultiProofError> {
         let key = ru256_to_eh256(slot_key);
-        let path = keccak256(&key);
+        let path = keccak256(key);
         let slot_item = slot_rlp_from_value(slot_value);
         let intent = Intent::Modify(slot_item);
         let proof = self
             .storage_proofs
             .get_mut(&rb160_to_eh160(address))
-            .ok_or_else(|| MultiProofError::NoAccount(format!("{}", hex_encode(address))))?;
+            .ok_or_else(|| MultiProofError::NoAccount(hex_encode(address).to_string()))?;
         proof.traverse(H256::from(path), &intent).map_err(|e| {
             MultiProofError::StorageProofError {
                 source: e,
@@ -236,7 +236,7 @@ impl StateForEvm for EIP1186MultiProof {
         let acc = self
             .accounts
             .get(&rb160_to_eh160(address))
-            .ok_or_else(|| EvmStateError::NoProofForAddress(format!("{}", hex_encode(address))))?;
+            .ok_or_else(|| EvmStateError::NoProofForAddress(hex_encode(address).to_string()))?;
 
         let info = AccountInfo {
             balance: acc.balance,
