@@ -1,7 +1,7 @@
 //! For verifying a Merkle Patricia Multi Proof for arbitrary proof values.
 //! E.g., Account, storage ...
 
-use std::{collections::HashMap, str::FromStr, fmt::Display};
+use std::{collections::HashMap, fmt::Display, str::FromStr};
 
 use archors_verify::{
     eip1186::Account,
@@ -324,7 +324,8 @@ impl MultiProof {
 
                 // Leaf: [remaining_path, value]
                 let traversal = &last_visited.traversal_record;
-                let branch_item_index = traversal.nibble_at_index(traversal.visiting_index())? as usize;
+                let branch_item_index =
+                    traversal.nibble_at_index(traversal.visiting_index())? as usize;
                 // Remaining path is for the leaf.
                 let leaf_path_start = traversal.visiting_index() + 1;
                 let leaf_path = last_visited.traversal_record.get_encoded_path(
@@ -344,9 +345,12 @@ impl MultiProof {
                     .ok_or(ModifyError::BranchTooShort)?;
                 *leaf_parent = leaf_node_hash.to_vec();
                 let updated_branch_node: Node = Node::try_from(old_node)?;
+                let updated_rlp_node = updated_branch_node.to_rlp_list();
+                let mut updated_hash = keccak256(&updated_rlp_node);
+                self.data.insert(H256::from(updated_hash), updated_rlp_node);
 
                 // Update the rest (starting from parents of the branch, ending at the root)
-                let mut updated_hash = keccak256(&updated_branch_node.to_rlp_list());
+
                 for outdated in visited.iter().rev().skip(1) {
                     updated_hash = self.update_node_with_child_hash(outdated, &updated_hash)?;
                 }
@@ -423,7 +427,7 @@ impl MultiProof {
             }
             Change::LeafInclusionModify(new_leaf_rlp_value) => {
                 let path = old_node.first().ok_or(ModifyError::LeafHasNoFinalPath)?;
-                let new_leaf_node = Node::try_from(vec![path.to_owned(),new_leaf_rlp_value])?;
+                let new_leaf_node = Node::try_from(vec![path.to_owned(), new_leaf_rlp_value])?;
                 let new_leaf_rlp = new_leaf_node.to_rlp_list();
                 let mut updated_hash = keccak256(&new_leaf_rlp);
 
@@ -788,12 +792,11 @@ impl MultiProof {
 pub struct Node(Vec<Item>);
 
 impl TryFrom<Vec<Vec<u8>>> for Node {
-
     type Error = ModifyError;
 
     fn try_from(value: Vec<Vec<u8>>) -> Result<Self, Self::Error> {
         if value.len() > 17 {
-            return Err(ModifyError::TooManyBranchItems)
+            return Err(ModifyError::TooManyBranchItems);
         }
         Ok(Self(value.into_iter().map(Item::from).collect()))
     }
@@ -861,7 +864,13 @@ struct VisitedNode {
 
 impl Display for VisitedNode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Visited {:?} node (hash: {}), followed index {} in node", self.kind, hex_encode(self.node_hash), self.item_index)
+        write!(
+            f,
+            "Visited {:?} node (hash: {}), followed index {} in node",
+            self.kind,
+            hex_encode(self.node_hash),
+            self.item_index
+        )
     }
 }
 

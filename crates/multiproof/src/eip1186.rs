@@ -289,7 +289,10 @@ impl StateForEvm for EIP1186MultiProof {
         let mut root = self.account_proofs.root;
         let total = changes.len() - 1;
         for (index, (address, account_updates)) in changes.into_iter().enumerate() {
-            println!("updating account {index} of {total}. Address {}", hex_encode(address));
+            println!(
+                "updating account {index} of {total}. Address {}",
+                hex_encode(address)
+            );
             root = self
                 .apply_account_delta(&address, account_updates)
                 .map_err(|e| EvmStateError::PostRoot(e.to_string()))?;
