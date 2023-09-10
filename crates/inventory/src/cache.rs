@@ -290,7 +290,13 @@ pub fn store_deduplicated_state(target_block: u64) -> Result<(), CacheError> {
 ///
 /// The prior block's state root is the root after transactions have been applied.
 /// Hence it is the state on which the target block should be applied.
+///
+/// The proofs are also requested for the block, which are used in two ways: debugging
+/// and to potentially provide internal nodes which may be required in post-execution
+/// state root computation. This doubles the calls to get_proof, and this second set of
+/// calls is not required if the post-execution root is not required.
 pub async fn store_state_proofs(url: &str, target_block: u64) -> Result<(), CacheError> {
+    let prior_block = target_block - 1;
     let names = CacheFileNames::new(target_block);
     let filename = names.block_accessed_state_deduplicated();
     let data = fs::read_to_string(&filename).map_err(|e| CacheError::FileOpener {
@@ -298,18 +304,28 @@ pub async fn store_state_proofs(url: &str, target_block: u64) -> Result<(), Cach
         filename,
     })?;
     let state_accesses: BlockStateAccesses = serde_json::from_str(&data)?;
-    let block_proofs = request_proofs(url, &state_accesses, target_block).await?;
+
+    // Get proofs for prior block
+    let block_proofs = request_proofs(url, &state_accesses, prior_block).await?;
     fs::create_dir_all(names.dirname())?;
     let mut block_file = File::create(names.prior_block_state_proofs())?;
     block_file.write_all(serde_json::to_string_pretty(&block_proofs)?.as_bytes())?;
+
+    // Get proofs for block. These are used for debugging post-execution proofs.
+    let block_proofs = request_proofs(url, &state_accesses, target_block).await?;
+    fs::create_dir_all(names.dirname())?;
+    let mut block_file = File::create(names.block_state_proofs())?;
+    block_file.write_all(serde_json::to_string_pretty(&block_proofs)?.as_bytes())?;
+    // They could also be used for internal nodes.
     Ok(())
 }
 
 /// Calls a node eth_getProof endpoint for every given accessed state.
 ///
-/// The target block is the block which will be traced. The getProof call will
-/// ask for the prior block, because proofs are post-execution. That way, the proof
-/// will be "state ready to trace the target block".
+/// Note that proofs are post-execution.
+///
+/// To get the proofs for "state ready to trace the target block", the target
+/// block should be the block prior to the one that will be traced.
 async fn request_proofs(
     url: &str,
     accesses: &BlockStateAccesses,
@@ -321,7 +337,7 @@ async fn request_proofs(
     let mut block_proofs = BlockProofs {
         proofs: HashMap::new(),
     };
-    let prior_block_number_hex = format!("0x{:x}", target_block - 1);
+    let prior_block_number_hex = format!("0x{:x}", target_block);
     for account in accounts_to_prove {
         let proof_request = eth_get_proof(&account, &prior_block_number_hex);
         let account = H160::from_slice(&hex_decode(account.address)?);
@@ -518,6 +534,9 @@ impl CacheFileNames {
     /// The state proof is eth_getProof for the prior block.
     fn prior_block_state_proofs(&self) -> PathBuf {
         self.dirname().join("prior_block_state_proofs.json")
+    }
+    fn block_state_proofs(&self) -> PathBuf {
+        self.dirname().join("block_state_proofs.json")
     }
     fn prior_block_state_proofs_compressed(&self) -> PathBuf {
         self.dirname().join("prior_block_state_proofs.snappy")
