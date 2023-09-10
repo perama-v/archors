@@ -10,8 +10,8 @@ archors_verify = { path = "../verify" }
 archors_types = { path = "../types" }
 ethers = "2.0.4"
 hex = "0.4.3"
-log = { workspace = true}
-revm = { path = "../../../revm/crates/revm", features = ["serde"] }
+log = { workspace = true }
+revm = { version = "3.3.0", features = ["serde"] }
 rlp = "0.5.2"
 rlp-derive = "0.1.0"
 serde = { version = "1.0.152", features = ["derive"] }

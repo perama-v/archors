@@ -23,3 +23,4 @@ log = "0.4.19"
 [dev-dependencies]
 anyhow = "1.0.69"
 tokio = { version = "1.26.0", features = ["full"] }
+revm = { version = "3.3.0", features = ["serde"] }
