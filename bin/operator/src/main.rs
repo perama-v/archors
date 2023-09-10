@@ -127,6 +127,7 @@ mod test {
     /// while true; do cargo test -q -p archors_operator --  std; done | cargo run -q -p archors_operator
     /// ```
     #[test]
+    #[ignore]
     fn test_write_to_std_out() {
         let mut stdout = Box::new(std::io::stdout());
         for line in 0..100 {
