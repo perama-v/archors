@@ -87,8 +87,23 @@ impl StateForEvm for BlockProofsBasic {
         Ok(accesses)
     }
 
-    fn state_root_post_block(self, changes: HashMap<B160, Account>) -> Result<B256, EvmStateError> {
+    fn state_root_post_block(
+        &mut self,
+        _changes: HashMap<B160, Account>,
+    ) -> Result<B256, EvmStateError> {
         unimplemented!("Post execution root check is not implemented for basic proof data format.")
+    }
+
+    fn print_account_proof<T: AsRef<str>>(&self, _account_address: T) -> Result<(), EvmStateError> {
+        todo!()
+    }
+
+    fn print_storage_proof<T: AsRef<str>>(
+        &self,
+        _account_address: T,
+        _storage_key: T,
+    ) -> Result<(), EvmStateError> {
+        todo!()
     }
 }
 

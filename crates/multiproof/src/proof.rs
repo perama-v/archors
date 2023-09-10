@@ -1,8 +1,9 @@
 //! For verifying a Merkle Patricia Multi Proof for arbitrary proof values.
 //! E.g., Account, storage ...
 
-use std::{collections::HashMap, fmt::Display, str::FromStr};
+use std::{collections::HashMap, fmt::Display};
 
+use archors_types::proof::DisplayProof;
 use archors_verify::{
     eip1186::Account,
     path::{
@@ -14,9 +15,7 @@ use ethers::{
     types::{Bytes, H256, U256},
     utils::keccak256,
 };
-use log::debug;
 use rlp::{Encodable, RlpStream};
-use rlp_derive::{RlpDecodable, RlpEncodable};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use PathNature::*;
@@ -784,6 +783,55 @@ impl MultiProof {
             }
             (_, NodeKind::Leaf) => todo!("error, grandparent cannot be leaf"),
         }
+    }
+    /// View a single proof (follow one path in the multiproof).
+    pub fn view(&self, path: H256) -> Result<DisplayProof, ProofError> {
+        let mut traversal = NibblePath::init(path.as_bytes());
+        let mut next_node_hash = self.root;
+        let mut visited_nodes: Vec<Vec<u8>> = vec![];
+        // Start near root, follow path toward leaves.
+        loop {
+            let next_node_rlp = self
+                .data
+                .get(&next_node_hash)
+                .ok_or(ProofError::NoNodeForHash(hex_encode(next_node_hash)))?;
+            visited_nodes.push(next_node_rlp.to_vec());
+            let next_node: Vec<Vec<u8>> = rlp::decode_list(next_node_rlp);
+
+            match NodeKind::deduce(&next_node)? {
+                NodeKind::Branch => {
+                    let item_index = traversal.visit_path_nibble()? as usize;
+                    let item = next_node
+                        .get(item_index)
+                        .ok_or(ProofError::BranchItemMissing)?;
+
+                    let is_exclusion_proof = item.is_empty();
+                    match is_exclusion_proof {
+                        true => break,
+                        false => {
+                            // Continue traversing
+                            next_node_hash = H256::from_slice(item);
+                        }
+                    }
+                }
+                NodeKind::Extension => {
+                    let extension = next_node.get(0).ok_or(ProofError::ExtensionHasNoItems)?;
+                    match traversal.match_or_mismatch(extension)? {
+                        SubPathMatches => {
+                            let item =
+                                next_node.get(1).ok_or(ProofError::ExtensionHasNoNextNode)?;
+                            next_node_hash = H256::from_slice(item);
+                            traversal.skip_extension_node_nibbles(extension)?;
+                        }
+                        SubPathDiverges(_) => continue,
+                        FullPathMatches => break,
+                        FullPathDiverges(_) => break,
+                    }
+                }
+                NodeKind::Leaf => break,
+            }
+        }
+        Ok(DisplayProof::init(visited_nodes))
     }
 }
 

@@ -83,8 +83,9 @@ impl<T: StateForEvm> BlockExecutor<T> {
     ///
     /// The entire block is executed but only the specified transaction is inspected
     /// (trace sent to stdout)
-    pub fn trace_transaction(mut self, target_tx_index: usize) -> Result<(), TraceError> {
+    pub fn trace_transaction(mut self, target_tx_index: usize) -> Result<T, TraceError> {
         let mut post_block_state_delta = PostBlockStateDelta::default();
+
         for tx in self.block.transactions.into_iter() {
             let index = tx
                 .transaction_index
@@ -117,13 +118,13 @@ impl<T: StateForEvm> BlockExecutor<T> {
                     .block_proof_cache
                     .state_root_post_block(post_block_state_delta.get_changes())?;
                 post_root_ok(&expected_root, &computed_root)?;
-                Ok(())
             }
-            RootCheck::Ignore => Ok(()),
+            RootCheck::Ignore => {}
         }
+        Ok(self.block_proof_cache)
     }
     /// Traces every transaction in the block.
-    pub fn trace_block(mut self) -> Result<(), TraceError> {
+    pub fn trace_block(mut self) -> Result<T, TraceError> {
         let mut post_block_state_delta = PostBlockStateDelta::default();
         for (index, tx) in self.block.transactions.into_iter().enumerate() {
             let post_tx = self
@@ -144,10 +145,10 @@ impl<T: StateForEvm> BlockExecutor<T> {
                     .block_proof_cache
                     .state_root_post_block(post_block_state_delta.get_changes())?;
                 post_root_ok(&expected_root, &computed_root)?;
-                Ok(())
             }
-            RootCheck::Ignore => Ok(()),
+            RootCheck::Ignore => {}
         }
+        Ok(self.block_proof_cache)
     }
 }
 

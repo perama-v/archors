@@ -1,5 +1,6 @@
 //! For working with multiple EIP-1186 proofs in concert.
 use std::collections::HashMap;
+use std::str::FromStr;
 
 use archors_types::execution::{EvmStateError, StateForEvm};
 use archors_types::utils::{
@@ -177,7 +178,9 @@ impl EIP1186MultiProof {
             .clone();
         let mut storage_hash = existing_account.storage_hash;
         for (key, slot) in account_updates.storage {
-            storage_hash = self.update_storage_proof(address, key, slot.present_value)?
+            if slot.is_changed() {
+                storage_hash = self.update_storage_proof(address, key, slot.present_value)?
+            }
         }
         let updated_account = AccountData {
             nonce: account_updates.info.nonce.into(),
@@ -280,24 +283,59 @@ impl StateForEvm for EIP1186MultiProof {
     }
 
     fn state_root_post_block(
-        mut self,
+        &mut self,
         changes: HashMap<B160, Account>,
     ) -> Result<B256, EvmStateError> {
         // Sort by address for debugging reliability.
         let mut changes: Vec<(B160, Account)> = changes.into_iter().collect();
         changes.sort_by_key(|x| x.0);
         let mut root = self.account_proofs.root;
-        let total = changes.len() - 1;
-        for (index, (address, account_updates)) in changes.into_iter().enumerate() {
-            println!(
-                "updating account {index} of {total}. Address {}",
-                hex_encode(address)
-            );
+        for (address, account_updates) in changes.into_iter() {
             root = self
                 .apply_account_delta(&address, account_updates)
                 .map_err(|e| EvmStateError::PostRoot(e.to_string()))?;
         }
         Ok(B256::from(root))
+    }
+
+    fn print_account_proof<T: AsRef<str>>(&self, account_address: T) -> Result<(), EvmStateError> {
+        let address = H160::from_str(account_address.as_ref())
+            .map_err(|e| EvmStateError::InvalidAddress(e.to_string()))?;
+        let proof = self
+            .account_proofs
+            .view(keccak256(address).into())
+            .map_err(|e| EvmStateError::DisplayError(e.to_string()))?;
+        println!("Account proof for address {}: {}", address, proof);
+        Ok(())
+    }
+
+    fn print_storage_proof<T: AsRef<str>>(
+        &self,
+        account_address: T,
+        storage_key: T,
+    ) -> Result<(), EvmStateError> {
+        // Storage proofs are rooted in accounts. First display the account proof.
+        self.print_account_proof(&account_address)?;
+
+        let address = H160::from_str(account_address.as_ref())
+            .map_err(|e| EvmStateError::InvalidAddress(e.to_string()))?;
+        // Permit the key to be passed as a uint, though technically should be H256.
+        let uint_key = U256::from_str(storage_key.as_ref())
+            .map_err(|e| EvmStateError::InvalidStorageKey(e.to_string()))?;
+        let h256_key = ru256_to_eh256(uint_key);
+        let path = keccak256(h256_key);
+        let storage_proofs = self
+            .storage_proofs
+            .get(&address)
+            .ok_or(EvmStateError::NoProofForAddress(address.to_string()))?;
+        let proof = storage_proofs
+            .view(path.into())
+            .map_err(|e| EvmStateError::DisplayError(e.to_string()))?;
+        println!(
+            "Storage proof for address {}, key {}: {}",
+            address, h256_key, proof
+        );
+        Ok(())
     }
 }
 
@@ -306,10 +344,10 @@ mod test {
     use std::{collections::HashMap, fs::File, io::BufReader, str::FromStr};
 
     use super::*;
-    use archors_verify::path::{nibbles_to_prefixed_bytes, NibblePath, TargetNodeEncoding};
+    use archors_verify::path::{NibblePath, TargetNodeEncoding};
     use ethers::types::H256;
 
-    use revm::primitives::{AccountStatus, HashMap as rHashMap, StorageSlot};
+    use revm::primitives::{HashMap as rHashMap, StorageSlot};
 
     use crate::{proof::Node, utils::hex_decode, EIP1186MultiProof};
     fn load_proof(path: &str) -> EIP1186MultiProof {
@@ -384,7 +422,10 @@ mod test {
                 code: None,
             },
             storage: storage_update,
-            status: AccountStatus::default(),
+            storage_cleared: false,
+            is_destroyed: false,
+            is_touched: false,
+            is_not_existing: false,
         };
         let post_root = proof
             .apply_account_delta(&B160::from_str(address).unwrap(), account_updates)
@@ -449,7 +490,10 @@ mod test {
                 code: None,
             },
             storage: rHashMap::default(),
-            status: AccountStatus::default(),
+            storage_cleared: false,
+            is_destroyed: false,
+            is_touched: false,
+            is_not_existing: false,
         };
         let mut proof = load_proof_str(PROOF_1);
         let address = "aa00000000000000000000000000000000000000";
@@ -562,7 +606,10 @@ mod test {
                 code: None,
             },
             storage, // updated
-            status: AccountStatus::default(),
+            storage_cleared: false,
+            is_destroyed: false,
+            is_touched: false,
+            is_not_existing: false,
         };
         let mut proof = load_proof_str(PROOF_1);
         let address = "aa00000000000000000000000000000000000000";
@@ -615,7 +662,10 @@ mod test {
                 code: None,
             },
             storage: storage_update,
-            status: AccountStatus::default(),
+            storage_cleared: false,
+            is_destroyed: false,
+            is_touched: false,
+            is_not_existing: false,
         };
         let post_root = proof
             .apply_account_delta(&B160::from_str(address).unwrap(), account_updates)
