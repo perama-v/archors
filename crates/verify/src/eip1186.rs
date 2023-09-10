@@ -134,8 +134,6 @@ fn verify_account_storage_component(
     storage_hash: &[u8; 32],
     storage_proof: StorageProof,
 ) -> Result<(), StorageError> {
-
-
     let rlp_value = rlp::encode(&storage_proof.value).to_vec();
     /*
     // TODO: Use ./multiproof/src/eip1186::slot_rlp_from_value(). See yellow paper (205).

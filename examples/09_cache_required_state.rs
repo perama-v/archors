@@ -3,7 +3,7 @@ use archors_inventory::cache::{
     get_block_from_cache, get_required_state_from_cache, store_block_with_transactions,
     store_required_state,
 };
-use archors_tracer::trace::{BlockExecutor, RootCheck};
+use archors_tracer::trace::{BlockExecutor, PostExecutionProof};
 
 /// Create, cache and then use the RequiredBlockState data type.
 ///
@@ -29,7 +29,7 @@ async fn main() -> Result<()> {
     // Use the cached RequiredBlockState
     let block = get_block_from_cache(BLOCK_NUMBER)?;
     let state = get_required_state_from_cache(BLOCK_NUMBER)?;
-    let executor = BlockExecutor::load(block, state, RootCheck::Ignore)?;
+    let executor = BlockExecutor::load(block, state, PostExecutionProof::Ignore)?;
 
     // Either trace the full block or a single transaction of interest.
     executor.trace_transaction(13)?;

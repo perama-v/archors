@@ -41,8 +41,9 @@ pub enum TraceError {
 /// and checked against the root in the block header.
 ///
 /// Some data formats that implement StateForEvm do not provide this functionality.
-pub enum RootCheck {
-    Perform,
+pub enum PostExecutionProof {
+    UpdateAndIgnore,
+    Update,
     Ignore,
 }
 
@@ -54,7 +55,7 @@ pub struct BlockExecutor<T: StateForEvm> {
     /// state root.
     block_proof_cache: T,
     /// Flag to check post-execution state root or not.
-    root_check: RootCheck,
+    root_check: PostExecutionProof,
 }
 
 impl<T: StateForEvm> BlockExecutor<T> {
@@ -62,7 +63,7 @@ impl<T: StateForEvm> BlockExecutor<T> {
     pub fn load(
         block: Block<Transaction>,
         block_proofs: T,
-        root_check: RootCheck,
+        root_check: PostExecutionProof,
     ) -> Result<Self, TraceError> {
         // For all important states, load into db.
         let mut cache_db = build_state_from_proofs(&block_proofs)?;
@@ -112,14 +113,20 @@ impl<T: StateForEvm> BlockExecutor<T> {
             post_block_state_delta.append_tx_changes(post_tx.state)?;
         }
         match self.root_check {
-            RootCheck::Perform => {
+            PostExecutionProof::Update => {
                 let expected_root = self.block.state_root;
                 let computed_root = self
                     .block_proof_cache
                     .state_root_post_block(post_block_state_delta.get_changes())?;
                 post_root_ok(&expected_root, &computed_root)?;
             }
-            RootCheck::Ignore => {}
+            PostExecutionProof::UpdateAndIgnore => {
+                let expected_root = self.block.state_root;
+                let computed_root = self
+                    .block_proof_cache
+                    .state_root_post_block(post_block_state_delta.get_changes())?;
+            }
+            PostExecutionProof::Ignore => {}
         }
         Ok(self.block_proof_cache)
     }
@@ -139,14 +146,21 @@ impl<T: StateForEvm> BlockExecutor<T> {
             post_block_state_delta.append_tx_changes(post_tx.state)?;
         }
         match self.root_check {
-            RootCheck::Perform => {
+            PostExecutionProof::Update => {
                 let expected_root = self.block.state_root;
                 let computed_root = self
                     .block_proof_cache
                     .state_root_post_block(post_block_state_delta.get_changes())?;
                 post_root_ok(&expected_root, &computed_root)?;
             }
-            RootCheck::Ignore => {}
+            PostExecutionProof::UpdateAndIgnore => {
+                let expected_root = self.block.state_root;
+                let computed_root = self
+                    .block_proof_cache
+                    .state_root_post_block(post_block_state_delta.get_changes())?;
+                post_root_ok(&expected_root, &computed_root)?;
+            }
+            PostExecutionProof::Ignore => {}
         }
         Ok(self.block_proof_cache)
     }
@@ -260,7 +274,7 @@ mod test {
         };
 
         block.transactions.push(tx);
-        let executor = BlockExecutor::load(block, state, RootCheck::Ignore).unwrap();
+        let executor = BlockExecutor::load(block, state, PostExecutionProof::Ignore).unwrap();
         // The dummy block should not successfully execute.
         assert!(executor.trace_block().is_err());
     }

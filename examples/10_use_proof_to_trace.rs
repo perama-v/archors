@@ -6,7 +6,7 @@ use archors_inventory::cache::{
 use archors_multiproof::{EIP1186MultiProof, StateForEvm};
 use archors_tracer::{
     state::BlockProofsBasic,
-    trace::{BlockExecutor, RootCheck},
+    trace::{BlockExecutor, PostExecutionProof},
 };
 
 /// Consume one block state proof.
@@ -38,7 +38,7 @@ fn main() -> Result<()> {
                 code: get_contracts_from_cache(block_number)?,
                 block_hashes: get_blockhashes_from_cache(block_number)?.to_hashmap(),
             };
-            let executor = BlockExecutor::load(block, state, RootCheck::Ignore)?;
+            let executor = BlockExecutor::load(block, state, PostExecutionProof::Ignore)?;
             re_execute_block(executor)?;
         }
         StateDataForm::MultiProof => {
@@ -50,13 +50,13 @@ fn main() -> Result<()> {
             let block_hashes = get_blockhashes_from_cache(block_number)?.to_hashmap();
 
             let state = EIP1186MultiProof::from_separate(proofs, code, block_hashes)?;
-            let executor = BlockExecutor::load(block, state, RootCheck::Perform)?;
+            let executor = BlockExecutor::load(block, state, PostExecutionProof::Update)?;
             re_execute_block(executor)?;
         }
         StateDataForm::SpecCompliant => {
             // Get state proofs (from peer / disk).
             let state = get_required_state_from_cache(block_number)?;
-            let executor = BlockExecutor::load(block, state, RootCheck::Ignore)?;
+            let executor = BlockExecutor::load(block, state, PostExecutionProof::Ignore)?;
             re_execute_block(executor)?;
         }
     }
