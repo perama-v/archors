@@ -7,7 +7,7 @@ use archors_types::{
     utils::hex_encode,
 };
 use ethers::types::{Block, Transaction, H256};
-use revm::primitives::{B256, U256};
+use revm::primitives::{Account, HashMap as rHashMap, B160, B256, U256};
 use thiserror::Error;
 
 use crate::{
@@ -50,7 +50,8 @@ pub enum RootCheck {
 pub struct BlockExecutor<T: StateForEvm> {
     block_evm: BlockEvm,
     block: Block<Transaction>,
-    /// Keeps block proof data up to date as transactions are applied.
+    /// After transactions are applied, the delta is applied to get post-execution proofs and
+    /// state root.
     block_proof_cache: T,
     /// Flag to check post-execution state root or not.
     root_check: RootCheck,
@@ -83,7 +84,7 @@ impl<T: StateForEvm> BlockExecutor<T> {
     /// The entire block is executed but only the specified transaction is inspected
     /// (trace sent to stdout)
     pub fn trace_transaction(mut self, target_tx_index: usize) -> Result<(), TraceError> {
-        let mut post_block_state_delta = HashMap::new();
+        let mut post_block_state_delta = PostBlockStateDelta::default();
         for tx in self.block.transactions.into_iter() {
             let index = tx
                 .transaction_index
@@ -107,14 +108,14 @@ impl<T: StateForEvm> BlockExecutor<T> {
                         .map_err(|source| TraceError::TxExecutionError { source, index })?
                 }
             };
-            post_block_state_delta.extend(post_tx.state);
+            post_block_state_delta.append_tx_changes(post_tx.state)?;
         }
         match self.root_check {
             RootCheck::Perform => {
                 let expected_root = self.block.state_root;
                 let computed_root = self
                     .block_proof_cache
-                    .state_root_post_block(post_block_state_delta)?;
+                    .state_root_post_block(post_block_state_delta.get_changes())?;
                 post_root_ok(&expected_root, &computed_root)?;
                 Ok(())
             }
@@ -123,7 +124,7 @@ impl<T: StateForEvm> BlockExecutor<T> {
     }
     /// Traces every transaction in the block.
     pub fn trace_block(mut self) -> Result<(), TraceError> {
-        let mut post_block_state_delta = HashMap::new();
+        let mut post_block_state_delta = PostBlockStateDelta::default();
         for (index, tx) in self.block.transactions.into_iter().enumerate() {
             let post_tx = self
                 .block_evm
@@ -134,14 +135,14 @@ impl<T: StateForEvm> BlockExecutor<T> {
 
             let _result = post_tx.result;
             // Update a proof object with state that changed after a transaction was executed.
-            post_block_state_delta.extend(post_tx.state);
+            post_block_state_delta.append_tx_changes(post_tx.state)?;
         }
         match self.root_check {
             RootCheck::Perform => {
                 let expected_root = self.block.state_root;
                 let computed_root = self
                     .block_proof_cache
-                    .state_root_post_block(post_block_state_delta)?;
+                    .state_root_post_block(post_block_state_delta.get_changes())?;
                 post_root_ok(&expected_root, &computed_root)?;
                 Ok(())
             }
@@ -162,15 +163,62 @@ fn post_root_ok(&header_root: &H256, computed_root: &B256) -> Result<(), TraceEr
     Ok(())
 }
 
+/// Produces the net account changes caused by running the EVM across multiple transactions.
+///
+/// REVM produces net changes after one transaction. If two transactions affect the same
+/// account, the storage slot changes should be included from both transactions. Later
+/// changes overwrite earlier changes.
+///
+/// Other members in Account (.is_destroyed, etc) are not updated and are not used elsewhere.
+#[derive(Default, Debug, Clone)]
+pub struct PostBlockStateDelta(HashMap<B160, Account>);
+
+impl PostBlockStateDelta {
+    /// Add state changes for multiple accounts to the state delta accumulator.
+    fn append_tx_changes(
+        &mut self,
+        changed_accounts: rHashMap<B160, Account>,
+    ) -> Result<(), TraceError> {
+        for (address, account) in changed_accounts {
+            self.append_account_changes(address, account)?;
+        }
+        Ok(())
+    }
+    /// Add state changes for one account to the state delta accumulator.
+    fn append_account_changes(
+        &mut self,
+        address: B160,
+        changes: Account,
+    ) -> Result<(), TraceError> {
+        let summary = match self.0.get_mut(&address) {
+            Some(acc) => acc,
+            None => {
+                self.0.insert(address, changes);
+                return Ok(());
+            }
+        };
+        // Overwrite any new slot changes individually.
+        for (key, val) in changes.storage {
+            summary.storage.insert(key, val);
+        }
+        // Update account components
+        summary.info = changes.info;
+        Ok(())
+    }
+    fn get_changes(self) -> HashMap<B160, Account> {
+        self.0
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
-    use std::{collections::HashMap, str::FromStr};
+    use std::str::FromStr;
 
     use ethers::types::{EIP1186ProofResponse, H160};
     use revm::{
         db::{CacheDB, DatabaseRef, EmptyDB},
-        primitives::{AccountInfo, U256},
+        primitives::{AccountInfo, HashMap as rHashMap, StorageSlot, U256},
     };
 
     use crate::state::BlockProofsBasic;
@@ -240,5 +288,97 @@ mod test {
         assert_eq!(new_state.basic(account).unwrap().unwrap().nonce, nonce);
         assert_eq!(new_state.storage(account, key0), Ok(U256::ZERO));
         assert_eq!(new_state.storage(account, key1), Ok(value1));
+    }
+
+    fn account_factory() -> Account {
+        Account {
+            info: AccountInfo {
+                balance: U256::from_str("1").unwrap(),
+                nonce: 1u64,
+                code_hash: B256::from_str(
+                    "0xce92c756baff35fa740c3557c1a971fd24d2d35b7c8e067880d50cd86bb0bc99",
+                )
+                .unwrap(),
+                code: None,
+            },
+            storage: rHashMap::default(),
+            storage_cleared: false,
+            is_destroyed: false,
+            is_touched: false,
+            is_not_existing: false,
+        }
+    }
+
+    #[test]
+    fn test_slot_changes_from_two_transactions_are_combined() {
+        let mut changes = PostBlockStateDelta::default();
+        let address = B160::from_str("0x00000000000000adc04c56bf30ac9d3c0aaf14dc").unwrap();
+        // First tx (0, 9) (1, 1)
+        let mut account_update = account_factory();
+        account_update.storage.insert(
+            U256::from_str("0x0").unwrap(),
+            StorageSlot {
+                present_value: U256::from_str("0x9").unwrap(),
+                ..Default::default()
+            },
+        );
+        account_update.storage.insert(
+            U256::from_str("0x1").unwrap(),
+            StorageSlot {
+                present_value: U256::from_str("0x1").unwrap(),
+                ..Default::default()
+            },
+        );
+        changes
+            .append_account_changes(address, account_update)
+            .unwrap();
+        // Second tx (1, 100), (2, 200), nonce=2
+        let mut account_update = account_factory();
+        account_update.info.nonce = 2;
+        account_update.storage.insert(
+            U256::from_str("0x1").unwrap(),
+            StorageSlot {
+                present_value: U256::from_str("0x100").unwrap(),
+                ..Default::default()
+            },
+        );
+        account_update.storage.insert(
+            U256::from_str("0x2").unwrap(),
+            StorageSlot {
+                present_value: U256::from_str("0x200").unwrap(),
+                ..Default::default()
+            },
+        );
+        changes
+            .append_account_changes(address, account_update)
+            .unwrap();
+        let net = changes.get_changes();
+        let net_account = net.get(&address).unwrap();
+
+        assert_eq!(
+            net_account
+                .storage
+                .get(&U256::from_str("0x0").unwrap())
+                .unwrap()
+                .present_value,
+            U256::from_str("0x9").unwrap()
+        );
+        assert_eq!(
+            net_account
+                .storage
+                .get(&U256::from_str("0x1").unwrap())
+                .unwrap()
+                .present_value,
+            U256::from_str("0x100").unwrap()
+        );
+        assert_eq!(
+            net_account
+                .storage
+                .get(&U256::from_str("0x2").unwrap())
+                .unwrap()
+                .present_value,
+            U256::from_str("0x200").unwrap()
+        );
+        assert_eq!(net_account.info.nonce, 2);
     }
 }
