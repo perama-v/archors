@@ -121,9 +121,7 @@ impl<T: StateForEvm> BlockExecutor<T> {
                 post_root_ok(&expected_root, &computed_root)?;
             }
             PostExecutionProof::UpdateAndIgnore => {
-                let expected_root = self.block.state_root;
-                let computed_root = self
-                    .block_proof_cache
+                self.block_proof_cache
                     .state_root_post_block(post_block_state_delta.get_changes())?;
             }
             PostExecutionProof::Ignore => {}
@@ -131,15 +129,30 @@ impl<T: StateForEvm> BlockExecutor<T> {
         Ok(self.block_proof_cache)
     }
     /// Traces every transaction in the block.
-    pub fn trace_block(mut self) -> Result<T, TraceError> {
+    pub fn trace_block(self) -> Result<T, TraceError> {
+        self.trace_block_internal(false)
+    }
+    /// Trace a block without producing a trace to stdout. Used for debugging.
+    pub fn trace_block_silent(self) -> Result<T, TraceError> {
+        self.trace_block_internal(true)
+    }
+    /// Executes a block. The execution trace can be toggled off.
+    fn trace_block_internal(mut self, silent: bool) -> Result<T, TraceError> {
         let mut post_block_state_delta = PostBlockStateDelta::default();
         for (index, tx) in self.block.transactions.into_iter().enumerate() {
-            let post_tx = self
+            let primed = self
                 .block_evm
                 .add_transaction_environment(tx)
-                .map_err(|source| TraceError::TxEnvError { source, index })?
-                .execute_with_inspector_eip3155()
-                .map_err(|source| TraceError::TxExecutionError { source, index })?;
+                .map_err(|source| TraceError::TxEnvError { source, index })?;
+
+            let post_tx = match silent {
+                false => primed
+                    .execute_with_inspector_eip3155()
+                    .map_err(|source| TraceError::TxExecutionError { source, index })?,
+                true => primed
+                    .execute_without_inspector()
+                    .map_err(|source| TraceError::TxExecutionError { source, index })?,
+            };
 
             let _result = post_tx.result;
             // Update a proof object with state that changed after a transaction was executed.
@@ -154,11 +167,8 @@ impl<T: StateForEvm> BlockExecutor<T> {
                 post_root_ok(&expected_root, &computed_root)?;
             }
             PostExecutionProof::UpdateAndIgnore => {
-                let expected_root = self.block.state_root;
-                let computed_root = self
-                    .block_proof_cache
+                self.block_proof_cache
                     .state_root_post_block(post_block_state_delta.get_changes())?;
-                post_root_ok(&expected_root, &computed_root)?;
             }
             PostExecutionProof::Ignore => {}
         }
@@ -220,6 +230,7 @@ impl PostBlockStateDelta {
         summary.info = changes.info;
         Ok(())
     }
+    /// Returns the inner map of account changes.
     fn get_changes(self) -> HashMap<B160, Account> {
         self.0
     }

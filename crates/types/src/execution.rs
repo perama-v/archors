@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use revm::primitives::{Account, AccountInfo, HashMap as rHashMap, B160, B256, U256};
 use thiserror::Error;
 
-use crate::utils::UtilsError;
+use crate::{utils::UtilsError, proof::{DisplayProof, DisplayStorageProof}};
 
 /// An error with tracing a block
 #[derive(Debug, Error, PartialEq)]
@@ -56,11 +56,11 @@ pub trait StateForEvm {
         changes: HashMap<B160, Account>,
     ) -> Result<B256, EvmStateError>;
     /// Print an account proof.
-    fn print_account_proof<T: AsRef<str>>(&self, account_address: T) -> Result<(), EvmStateError>;
+    fn print_account_proof<T: AsRef<str>>(&self, account_address: T) -> Result<DisplayProof, EvmStateError>;
     /// Print a storage proof for a given account.
     fn print_storage_proof<T: AsRef<str>>(
         &self,
         account_address: T,
         storage_key: T,
-    ) -> Result<(), EvmStateError>;
+    ) -> Result<DisplayStorageProof, EvmStateError>;
 }

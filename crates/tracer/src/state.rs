@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use archors_types::{
     execution::{EvmStateError, StateForEvm},
-    utils::{eh256_to_ru256, eu256_to_ru256, eu64_to_ru256, hex_encode},
+    utils::{eh256_to_ru256, eu256_to_ru256, eu64_to_ru256, hex_encode}, proof::{DisplayProof, DisplayStorageProof},
 };
 use ethers::types::{EIP1186ProofResponse, H160, H256, U64};
 use revm::{
@@ -94,7 +94,7 @@ impl StateForEvm for BlockProofsBasic {
         unimplemented!("Post execution root check is not implemented for basic proof data format.")
     }
 
-    fn print_account_proof<T: AsRef<str>>(&self, _account_address: T) -> Result<(), EvmStateError> {
+    fn print_account_proof<T: AsRef<str>>(&self, _account_address: T) -> Result<DisplayProof, EvmStateError> {
         todo!()
     }
 
@@ -102,7 +102,7 @@ impl StateForEvm for BlockProofsBasic {
         &self,
         _account_address: T,
         _storage_key: T,
-    ) -> Result<(), EvmStateError> {
+    ) -> Result<DisplayStorageProof, EvmStateError> {
         todo!()
     }
 }

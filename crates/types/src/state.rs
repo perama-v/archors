@@ -15,7 +15,7 @@ use crate::{
         MAX_STORAGE_NODES_PER_BLOCK, MAX_STORAGE_PROOFS_PER_ACCOUNT,
     },
     execution::{EvmStateError, StateForEvm},
-    utils::{ssz_h256_to_rb256, ssz_h256_to_ru256, ssz_u256_to_ru256, ssz_u64_to_u64, UtilsError},
+    utils::{ssz_h256_to_rb256, ssz_h256_to_ru256, ssz_u256_to_ru256, ssz_u64_to_u64, UtilsError}, proof::{DisplayProof, DisplayStorageProof},
 };
 
 use revm::primitives::{
@@ -196,7 +196,7 @@ impl StateForEvm for RequiredBlockState {
         )
     }
 
-    fn print_account_proof<T: AsRef<str>>(&self, _account_address: T) -> Result<(), EvmStateError> {
+    fn print_account_proof<T: AsRef<str>>(&self, _account_address: T) -> Result<DisplayProof, EvmStateError> {
         todo!()
     }
 
@@ -204,7 +204,7 @@ impl StateForEvm for RequiredBlockState {
         &self,
         _account_address: T,
         _storage_key: T,
-    ) -> Result<(), EvmStateError> {
+    ) -> Result<DisplayStorageProof, EvmStateError> {
         todo!()
     }
 }
