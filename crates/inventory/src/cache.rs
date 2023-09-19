@@ -443,6 +443,20 @@ pub fn get_proofs_from_cache(block: u64) -> Result<BlockProofs, CacheError> {
     Ok(block_proofs)
 }
 
+
+/// Retrieves the post-state accessed-state proofs for a single block from cache.
+/// This can be used to debug the block executor and proof update mechanisms.
+pub fn get_post_state_proofs_from_cache(block: u64) -> Result<BlockProofs, CacheError> {
+    let proof_cache_path = CacheFileNames::new(block).block_state_proofs();
+    let file = File::open(&proof_cache_path).map_err(|e| CacheError::FileOpener {
+        source: e,
+        filename: proof_cache_path,
+    })?;
+    let reader = BufReader::new(file);
+    let block_proofs = serde_json::from_reader(reader)?;
+    Ok(block_proofs)
+}
+
 /// Retrieves the transferrable (ssz+snappy) proofs for a single block from cache.
 pub fn get_required_state_from_cache(block: u64) -> Result<RequiredBlockState, CacheError> {
     let proof_cache_path = CacheFileNames::new(block).prior_block_transferrable_state_proofs();
@@ -463,7 +477,8 @@ pub fn get_block_from_cache(block: u64) -> Result<Block<Transaction>, CacheError
         filename: block_cache_path,
     })?;
     let reader = BufReader::new(file);
-    let block = serde_json::from_reader(reader)?;
+    let mut block: Block<Transaction> = serde_json::from_reader(reader)?;
+    block.transactions.sort_by_key(|tx|tx.nonce);
     Ok(block)
 }
 
