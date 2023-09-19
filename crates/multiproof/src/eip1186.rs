@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::str::FromStr;
 
 use archors_types::execution::{EvmStateError, StateForEvm};
+use archors_types::proof::{DisplayProof, DisplayStorageProof};
 use archors_types::utils::{
     eh256_to_ru256, eu256_to_ru256, eu64_to_ru256, rb160_to_eh160, ru256_to_eh256,
 };
@@ -203,18 +204,10 @@ impl EIP1186MultiProof {
     }
 }
 
-/// A slot value is stored differently depending on size of the RLP of the value.
-/// - short: store RLP of the value
-/// - long: store the hash of the RLP of the value.
-///
-/// See yellow paper (205).
+/// Get the RLP-encoded form of a storage value.
 pub fn slot_rlp_from_value(slot_value: U256) -> Vec<u8> {
     let trimmed = slot_value.to_be_bytes_trimmed_vec();
-    let slot_rlp = rlp::encode(&trimmed).to_vec();
-    match slot_rlp.len() < 32 {
-        true => slot_rlp,                       // rlp(val)
-        false => keccak256(&slot_rlp).to_vec(), // sha(rlp(val))
-    }
+    rlp::encode(&trimmed).to_vec()
 }
 
 /// Information about an account with enough data to uniquely identify all components
@@ -286,7 +279,7 @@ impl StateForEvm for EIP1186MultiProof {
         &mut self,
         changes: HashMap<B160, Account>,
     ) -> Result<B256, EvmStateError> {
-        // Sort by address for debugging reliability.
+        // Sort by address for debugging reliability. TODO remove if not needed or use BTreeMap.
         let mut changes: Vec<(B160, Account)> = changes.into_iter().collect();
         changes.sort_by_key(|x| x.0);
         let mut root = self.account_proofs.root;
@@ -298,25 +291,24 @@ impl StateForEvm for EIP1186MultiProof {
         Ok(B256::from(root))
     }
 
-    fn print_account_proof<T: AsRef<str>>(&self, account_address: T) -> Result<(), EvmStateError> {
+    fn print_account_proof<T: AsRef<str>>(
+        &self,
+        account_address: T,
+    ) -> Result<DisplayProof, EvmStateError> {
         let address = H160::from_str(account_address.as_ref())
             .map_err(|e| EvmStateError::InvalidAddress(e.to_string()))?;
         let proof = self
             .account_proofs
             .view(keccak256(address).into())
             .map_err(|e| EvmStateError::DisplayError(e.to_string()))?;
-        println!("Account proof for address {}: {}", address, proof);
-        Ok(())
+        Ok(proof)
     }
 
     fn print_storage_proof<T: AsRef<str>>(
         &self,
         account_address: T,
         storage_key: T,
-    ) -> Result<(), EvmStateError> {
-        // Storage proofs are rooted in accounts. First display the account proof.
-        self.print_account_proof(&account_address)?;
-
+    ) -> Result<DisplayStorageProof, EvmStateError> {
         let address = H160::from_str(account_address.as_ref())
             .map_err(|e| EvmStateError::InvalidAddress(e.to_string()))?;
         // Permit the key to be passed as a uint, though technically should be H256.
@@ -331,11 +323,10 @@ impl StateForEvm for EIP1186MultiProof {
         let proof = storage_proofs
             .view(path.into())
             .map_err(|e| EvmStateError::DisplayError(e.to_string()))?;
-        println!(
-            "Storage proof for address {}, key {}: {}",
-            address, h256_key, proof
-        );
-        Ok(())
+        Ok(DisplayStorageProof {
+            account: self.print_account_proof(&account_address)?,
+            storage: proof,
+        })
     }
 }
 
@@ -681,13 +672,12 @@ mod test {
         // Short U256 is stored as U256
         assert_eq!(slot_rlp_from_value(U256::from(3)), vec![0x3]);
 
-        // Long U256 is stored as sha(rlp(U256))
-        let big_val =
-            U256::from_str("0x2cfdfbdd943ec0153ed07b97f03eb765dc11cc79c6f750effcc2d126f93c4b31")
-                .unwrap();
-        let rlp = rlp::encode(&big_val);
-        let hash = keccak256(rlp);
-        assert_eq!(slot_rlp_from_value(big_val), hash.to_vec());
+        // Round trip for 32 byte value.
+        let long_string = "0x64544dd700000000000047b92012b8aa582300001882a426ac785114088bf5d2";
+        let big_val = U256::from_str(long_string).unwrap();
+        let rlp = slot_rlp_from_value(big_val);
+        let derived: Vec<u8> = rlp::decode(&rlp).unwrap();
+        assert_eq!(derived, hex_decode(long_string).unwrap());
     }
 
     #[test]

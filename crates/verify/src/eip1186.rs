@@ -135,13 +135,8 @@ fn verify_account_storage_component(
     storage_proof: StorageProof,
 ) -> Result<(), StorageError> {
     let rlp_value = rlp::encode(&storage_proof.value).to_vec();
-    /*
-    // TODO: Use ./multiproof/src/eip1186::slot_rlp_from_value(). See yellow paper (205).
-    let claimed_value = match rlp_value.len() < 32 {
-        true => rlp_value,
-        false => keccak256(rlp_value).to_vec(),
-    };
-    */
+
+    // TODO: See yellow paper (205). Account for cases where entire node is <32 bytes.
 
     let storage_prover = SingleProofPath {
         proof: storage_proof.proof,
