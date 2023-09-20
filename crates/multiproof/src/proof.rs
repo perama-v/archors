@@ -452,8 +452,10 @@ impl MultiProof {
                 //   - If branch, go to 1.
 
                 // Perform updates requiring structural changes to the trie.
+                let removed_leaf_index = visited.len() - 1;
+                // Modify the parent (and higher ancestors if needed).
                 let (highest_hash, nodes_processed) =
-                    self.process_child_removal(visited, visited.len() - 1)?;
+                    self.process_child_removal(visited, removed_leaf_index - 1)?;
 
                 // Now just perform simple hash updates.
                 let mut updated_hash = highest_hash;
