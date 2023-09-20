@@ -125,8 +125,10 @@ impl EIP1186MultiProof {
     ) -> Result<H256, MultiProofError> {
         let key = ru256_to_eh256(slot_key);
         let path = keccak256(key);
-        let slot_item = slot_rlp_from_value(slot_value);
-        let intent = Intent::Modify(slot_item);
+        let intent = match slot_value == U256::default(){
+            true => Intent::Remove,
+            false => Intent::Modify(slot_rlp_from_value(slot_value)),
+        };
         let proof = self
             .storage_proofs
             .get_mut(&rb160_to_eh160(address))
@@ -149,6 +151,8 @@ impl EIP1186MultiProof {
         account: AccountData,
     ) -> Result<H256, MultiProofError> {
         let path = keccak256(address);
+        // Even if SELFDESCTRUCT is used, Intent::Remove is not used because the account is kept
+        // in the trie (with null storage/code hashes).
         let intent = Intent::Modify(account.rlp_bytes().into());
         self.account_proofs
             .traverse(path.into(), &intent)
