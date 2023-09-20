@@ -311,17 +311,11 @@ impl MultiProof {
         // Get the terminal node by removing it from the proof.
         let old_node_rlp = self
             .data
-            .remove(&old_terminal_hash)
+            .get(&old_terminal_hash)
             .ok_or(ModifyError::NoNodeForHash)?;
         let mut old_node: Vec<Vec<u8>> = rlp::decode_list(&old_node_rlp);
         match change {
             Change::BranchExclusionToInclusion(new_leaf_rlp_value) => {
-                if is_empty_value(&new_leaf_rlp_value) {
-                    // Detect if an inclusion conversion was requested on a null value.
-                    // Put the node back.
-                    self.data.insert(old_terminal_hash, old_node_rlp);
-                    return Ok(());
-                }
                 // Main concept: Add leaf to the previously terminal branch.
                 // As an exclusion proof there is no other key that overlaps this path part,
                 // so no extension node is needed.
@@ -364,12 +358,6 @@ impl MultiProof {
                 new_value,
                 divergent_nibble_index,
             } => {
-                if is_empty_value(&new_value) {
-                    // Detect if an inclusion conversion was requested on a null value.
-                    // Put the node back.
-                    self.data.insert(old_terminal_hash, old_node_rlp);
-                    return Ok(());
-                }
                 // Main concept: Exclusion proof to inclusion proof by adding a leaf.
                 // An extension is required if the extension has something
                 // in common with the new leaf path.
@@ -399,12 +387,6 @@ impl MultiProof {
                 new_value,
                 divergent_nibble_index,
             } => {
-                if is_empty_value(&new_value) {
-                    // Detect if an inclusion conversion was requested on a null value.
-                    // Put the node back.
-                    self.data.insert(old_terminal_hash, old_node_rlp);
-                    return Ok(());
-                }
                 // Main concept: Add an extension node then a branch node and move old leaf to it.
                 // Then add new leaf node. An extension is required if
                 // the old and new leaves have multiple nibbles in common.
@@ -647,7 +629,7 @@ impl MultiProof {
                 .ok_or(ModifyError::NoVisitedNode)?;
             let outdated_rlp = self
                 .data
-                .remove(&visited.node_hash)
+                .get(&visited.node_hash)
                 .ok_or(ModifyError::NoNodeForHash)?;
             let outdated_node: Vec<Vec<u8>> = rlp::decode_list(&outdated_rlp);
 
