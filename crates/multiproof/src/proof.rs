@@ -20,7 +20,10 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use PathNature::*;
 
-use crate::utils::hex_encode;
+use crate::{
+    node::{NodeError, NodeKind},
+    utils::hex_encode,
+};
 
 #[derive(Debug, Error)]
 pub enum ProofError {
@@ -62,6 +65,8 @@ pub enum ProofError {
     IncorrectLeafData,
     #[error("ModifyError {0}")]
     ModifyError(#[from] ModifyError),
+    #[error("NodeError {0}")]
+    NodeError(#[from] NodeError),
 }
 
 #[derive(Debug, Error)]
@@ -972,33 +977,6 @@ pub enum Intent {
     /// Check that key is not in the tree. The caller can check if the value
     /// represents the absent kind (null account / null storage)
     VerifyExclusion,
-}
-
-#[derive(Debug)]
-pub enum NodeKind {
-    Branch,
-    Extension,
-    Leaf,
-}
-
-impl NodeKind {
-    fn deduce(node: &[Vec<u8>]) -> Result<NodeKind, ProofError> {
-        match node.len() {
-            17 => Ok(NodeKind::Branch),
-            2 => {
-                // Leaf or extension
-                let partial_path = node.first().ok_or(ProofError::NodeEmpty)?;
-                let encoding = partial_path.first().ok_or(ProofError::NoEncoding)?;
-                Ok(match PrefixEncoding::try_from(encoding)? {
-                    PrefixEncoding::ExtensionEven | PrefixEncoding::ExtensionOdd(_) => {
-                        NodeKind::Extension
-                    }
-                    PrefixEncoding::LeafEven | PrefixEncoding::LeafOdd(_) => NodeKind::Leaf,
-                })
-            }
-            num @ _ => Err(ProofError::NodeHasInvalidItemCount(num)),
-        }
-    }
 }
 
 /// Detects if an RLP encoded value is for an empty storage value or account.
