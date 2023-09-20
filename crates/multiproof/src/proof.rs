@@ -718,13 +718,39 @@ impl MultiProof {
         }
         unreachable!()
     }
-    /// When the trie is altered and a parent is removed, the nodes above (grandparent) and
-    /// below (only child) are modified to have a correct path.
-    ///
-    /// The nodes are created and updated and the hash of the node closest to the root is
-    /// returned.
-    ///
-    /// The child was previously on a branch with a specific nibble.
+    /**
+    When the trie is altered and a parent is removed, the nodes above (grandparent) and
+    below (only child) are modified to have a correct path.
+    On entering this function the situation is:
+    - Grandparent (may be leaf, extension or branch)
+      - Parent (2-item branch, removed)
+        - Child (leaf, removed)
+        - Orphaned sibling (may be leaf, extension or branch)
+
+    The outcome depends on the kind of node that the grandparent and orphaned sibling are:
+
+    In a trio (grandparent-parent-sibling):
+    - **E & **L: Additional sibling node RLP required to make updates.
+        - EBE -> E
+        - EBL -> L
+        - BBE -> BE
+        - BBL -> BL
+    - **B: Additional sibling node RLP required only to differentiate from above cases.
+        - EBB -> EB
+        - BBB -> BEB
+
+    Where additional data is required, the reason is as follows:
+    - The deleted parent took up 1 nibble in the now-orphaned sibling.
+    - The nibble must still appear in the traversal to that node.
+    - To add the nibble to the node, the node must be known.
+    - Only the hash is known because there is not necessarily a proof for the sibling
+    - The sibling node must be obtained from a special cache created for this purpose.
+
+    For the cases that
+
+    The nodes are created and updated and the hash of the node closest to the root is
+    returned.
+    */
     fn resolve_child_and_grandparent_paths(
         &mut self,
         only_child_hash: &[u8],
@@ -754,34 +780,46 @@ impl MultiProof {
         let only_child_node: Vec<Vec<u8>> = rlp::decode_list(&only_child_rlp);
 
         let child: NodeKind = todo!();
-        let grandparent: NodeKind = todo!();
+        let grandparent: NodeKind = NodeKind::deduce(&grandparent_node)?;
 
-        match (child, grandparent) {
+        match (grandparent, child) {
             (NodeKind::Branch, NodeKind::Branch) => {
+                // BBB -> BEB. No sibling change required.
+
                 // Add an extension above the sibling. Make the sibling branch index the extension path.
                 todo!()
             }
             (NodeKind::Branch, NodeKind::Extension) => {
-                // Add sibling branch index to grandparent extension.
+                // BBE -> BE. Additional sibling node RLP required.
+
+                // Add sibling branch index to sibling extension.
+                todo!()
+            }
+            (NodeKind::Branch, NodeKind::Leaf) => {
+                // BBL -> BL. Additional sibling node RLP required.
+
+                // Add sibling branch index to sibling leaf path.
                 todo!()
             }
             (NodeKind::Extension, NodeKind::Branch) => {
-                // Add sibling branch index to sibling extension. Requires knowledge of sibling node.
+                // EBB -> EB. No sibling change required.
+
+                // Add sibling branch index to grandparent extension.
                 todo!()
             }
             (NodeKind::Extension, NodeKind::Extension) => {
-                // Remove grandparent extension. Add sibling branch index and grandparent extension to sibling extension. Requires knowledge of sibling node.
+                // EBE -> E. Additional sibling node RLP required.
+
+                // Remove grandparent extension. Add sibling branch index and grandparent extension to sibling extension.
                 todo!()
             }
-            (NodeKind::Leaf, NodeKind::Branch) => {
-                // Add sibling branch index to sibling leaf path. Requires knowledge of sibling node.
+            (NodeKind::Extension, NodeKind::Leaf) => {
+                // EBL -> L. Additional sibling node RLP required.
+
+                // Remove grandparent extension, add sibling branch index and grandparent extension path to sibling leaf path.
                 todo!()
             }
-            (NodeKind::Leaf, NodeKind::Extension) => {
-                // Remove grandparent extension, add sibling branch index and grandparent extension path to sibling leaf path. Requires knowledge of sibling node.
-                todo!()
-            }
-            (_, NodeKind::Leaf) => todo!("error, grandparent cannot be leaf"),
+            (NodeKind::Leaf, _) => todo!("error, grandparent cannot be leaf"),
         }
     }
     /// View a single proof (follow one path in the multiproof).

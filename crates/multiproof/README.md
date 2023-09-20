@@ -194,11 +194,13 @@ These cases have the property:
 - The sibling node is an extension or a leaf
 
 In a trio (grandparent-parent-sibling):
-- EBE & BBE: Additional data required.
+- **E & **L: Additional sibling node RLP required to make updates.
     - EBE -> E
+    - EBL -> L
     - BBE -> BE
-- EBB & BBB: No additional data required.
-    - EBE -> EB
+    - BBL -> BL
+- **B: Additional sibling node RLP required only to differentiate from above cases.
+    - EBB -> EB
     - BBB -> BEB
 
 ### Pattern: Extension-Branch-Extension to Extension
