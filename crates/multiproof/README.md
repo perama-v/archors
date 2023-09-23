@@ -183,7 +183,7 @@ flowchart TD
     F --item d--> E[path 'ef', inclusion proof for leaf '...abcdef']
 ```
 
-## Proof edits with tree depth reduction: sibling fetching
+## Proof edits with tree depth reduction
 
 If there is an inclusion proof that is converted to an exclusion proof, this
 may result in a removal of some internal nodes.
@@ -199,9 +199,43 @@ In a trio (grandparent-parent-sibling):
     - EBL -> L
     - BBE -> BE
     - BBL -> BL
-- **B: Additional sibling node RLP required only to differentiate from above cases.
+- **B: Additional sibling node type and hash required to make updates.
     - EBB -> EB
     - BBB -> BEB
+
+In all scenarios, the goal is to update the grandparent so that trie changes can be made all the
+way to the root. The grandparent hash is the missing component. This could be achieved either
+by
+- Updating trie structure according to the above principles (see below for expanded forms).
+This requires sibling RLP knowledge, which is not readily available information using eth_getProof.
+- Getting the grandparent node. The post-state eth_getProof for the key can be treated as an oracle
+for the grandparent.
+
+See relevant code at: [./src/proof.rs](./src/oracle.rs)
+
+### Algorithm - grandparent oracle
+
+The grandparent that needs to be updated when a parent is deleted can be fetched from an oracle.
+The grandparent is hashed and added to the multiproof, cascading changes to the hashes all the
+way to the root. Final verification of the state root will show that the oracle data is valid.
+
+### Algorithm - revisiting an oracle-based node
+
+> Note: this is not implemented and so archors will not detect an EVM bug affecting these storage
+> keys. The number of affected keys is likely very small, but has not been measured.
+
+When an update to a different key involves traversing that oracle-based grandparent, the
+traversal will naturally follow the updated grandparent. How can one check that the state updates
+for the key are correct?
+
+One can add a flag to oracle-based nodes. When encountered, the old node should be traversed and
+a temporary subtree created for the changes. When the root of the subtree matches the hash in the
+oracle-based node, the output of the EVM is confirmed to be correct.
+
+## Patterns
+
+The following section illustrates the structure of some scenarios that require oracle-based
+information.
 
 ### Pattern: Extension-Branch-Extension to Extension
 
@@ -236,8 +270,7 @@ flowchart TD
 ```
 Resolution: This scenario can be anticipated and the node can be made part of the
 data required for block `n`. Here the absence of the key in the next block is
-identified and an exclusion proof obtained via `eth_getProof`. Let's call this
-method "sibling fetching"
+identified and an exclusion proof obtained via `eth_getProof`.
 
 ```mermaid
 flowchart TD
@@ -259,7 +292,7 @@ flowchart TD
 
 In this case, branch node B will only have one item and must be removed.
 The extension now absorbs the extra '1' part of the path. As above, this
-requires sibling fetching.
+requires oracle based information.
 
 ```mermaid
 flowchart TD
@@ -274,7 +307,9 @@ Pattern: BBE -> BE+
 
 ### Pattern: Extension-Branch-Branch to Extension-Branch
 
-This is a a trie structure where the sibling is a branch. This does not require special additional knowledge.
+This is a a trie structure where the sibling is a branch.
+The sibling is ultimately not updated, but knowledge that it is a branch requires oracle-based
+information.
 
 ```mermaid
 flowchart TD
@@ -304,7 +339,8 @@ Pattern EBB -> E+B
 
 
 This is a trie structure where the sibling is a branch and so is the grandparent.
-This does not require special additional knowledge.
+The sibling is ultimately not updated, but knowledge that it is a branch requires oracle-based
+information.
 
 ```mermaid
 flowchart TD
@@ -334,83 +370,3 @@ flowchart TD
 
 
 Pattern BBB -> BEB
-
-### Live updates
-
-When executing a block and updating the multiproof in real time, the requirement for
-"sibling fetching" creates an additional constraint.
-
-- Without sibling fetching
-    - Traverse path (root -> leaf), get value, update value
-    - Backtrack path and update trie.
-- With sibling fetching
-    - Traverse path (root -> leaf), get value, update value
-    - Backtrack path and if additional data is required, look in "fetched extensions" (block `n`)
-    for the node. That is, using the node hash, retrieve the node. The node may be:
-        - Present: Proceed in updating the trie (removing nodes etc.) back to the root.
-        - Absent: This means that there is some update to that part of the trie
-        that has not yet been applied. Remove the leaf being deleted but leave the branch
-        with a single child. It will later be traversed along that child at which point
-        the branch can be deleted and the extensions updated appropriately. This can be called
-        a single-child  branch
-
-The explanation for leaving a single-child branch is as follows.
-Consider that the fetched extension '2345' is based on the state root for block `n`,
-after the application of all the transactions (say 100 transactions).
-
-If we are at transaction 50 and are trying to remove the leaf from the multiproof,
-but at transaction 75 there is an update to branch B. This means that when
-looking up the extension hash during transaction 50, the hash will not be present in
-the fetched extensions data. Only after 75 will the hash be guaranteed to
-correspond to a node in the trie for block `n`.
-
-```mermaid
-flowchart TD
-    A[some traversal in block n - 1...] --> B[extension 'abc'] --> F[branch A]
-    F -.item 1.-> C[hash of extension '2345']
-    F --item d--> E[path 'ef', inclusion proof for leaf '...abcdef']
-    C -.-> G[branch B]
-```
-
-So, branch A is not able to be updated until after lower levels have been updated
-in later transactions. So, the node is modified to only have one child to serve as a flag
-that it is awaiting later transaction state changes.
-
-
-```mermaid
-flowchart TD
-    A[some traversal in block n...] --> B[extension 'abc12345']
-    B -.-> E[exclusion proof for path '...abcdef']
-```
-
-Suppose the very next state lookup is for some key after branch B. The outdated traversal can
-still be used (we only removed the leaf and so the branch is still present). The value is updated
-and then on backtrack, if a branch with one child is found, it should be removed.
-
-This means that while the state root between transactions 50 and 75 will be incorrect, after
-that point it will be correct again. The root at after the last transaction should match
-the root in the block header.
-
-
-### Enumeration of scenarios
-
-- Grandparent
-    - Parent (branch, for deletion)
-        - Remaining single sibling (at some index in parent)
-
-Considering what to do when parent is branch (for deletion) and there is only one sibling:
-
-
-- Sibling leaf
-    - Grandparent Branch: Add sibling branch index to sibling leaf path. Requires knowledge of sibling node.
-        - get_proof in subsequent block for the removed key: this will get an exclusion proof up to the grandparent branch which is not enough to fetch the leaf node.
-    - Grandparent Extension: Remove grandparent extension, add sibling branch index and grandparent extension path to sibling leaf path. Requires knowledge of sibling node.
-- Sibling extension
-    - Grandparent Branch: Add sibling branch index to sibling extension. Requires knowledge of sibling node.
-    - Grandparent Extension: Remove grandparent extension. Add sibling branch index and grandparent extension to sibling extension. Requires knowledge of sibling node.
-- Sibling branch
-    - Grandparent Branch: Add an extension above the sibling. Make the sibling branch index the extension path.
-    - Grandparent Extension: Add sibling branch index to grandparent extension.
-
-Rule: if the sibling is an extension or leaf, the sibling node is required ("sibling fetching")
-
