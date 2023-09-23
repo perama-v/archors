@@ -5,23 +5,23 @@ edition = "2021"
 description = "Tools for single Ethereum archival blocks and state proofs"
 
 [workspace]
-members = [
-    "crates/*",
-    "bin/*"
-]
+members = ["crates/*", "bin/*"]
 
 [dependencies]
-archors_inventory = { path = "crates/inventory"}
-archors_multiproof = { path = "crates/multiproof"}
-archors_tracer = { path = "crates/tracer"}
-archors_types = { path = "crates/types"}
-archors_verify = { path = "crates/verify"}
+archors_inventory = { path = "crates/inventory" }
+archors_multiproof = { path = "crates/multiproof" }
+archors_tracer = { path = "crates/tracer" }
+archors_types = { path = "crates/types" }
+archors_verify = { path = "crates/verify" }
 
 [workspace.dependencies]
 log = "0.4.19"
+env_logger = "0.10.0"
 
 [dev-dependencies]
 anyhow = "1.0.69"
 ethers = "2.0.4"
+log = { workspace = true }
+env_logger = { workspace = true }
 tokio = { version = "1.26.0", features = ["full"] }
 revm = { version = "3.3.0", features = ["serde"] }

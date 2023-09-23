@@ -9,7 +9,7 @@ anyhow = "1.0.69"
 archors_inventory = { path = "../../crates/inventory"}
 archors_types = { path = "../../crates/types"}
 clap = { version = "4.3.19", features = ["derive"] }
-env_logger = "0.10.0"
+env_logger = {workspace = true}
 hex = "0.4.3"
 log = { workspace = true }
 tokio = { version = "1.26.0", features = ["full"] }
