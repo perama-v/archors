@@ -1,13 +1,14 @@
 use anyhow::Result;
 use archors_inventory::cache::{
     get_block_from_cache, get_blockhashes_from_cache, get_contracts_from_cache,
-    get_proofs_from_cache, get_required_state_from_cache,
+    get_proofs_from_cache, get_required_state_from_cache, get_node_oracle_from_cache,
 };
 use archors_multiproof::{EIP1186MultiProof, StateForEvm};
 use archors_tracer::{
     state::BlockProofsBasic,
     trace::{BlockExecutor, PostExecutionProof},
 };
+use log::info;
 
 /// Consume one block state proof.
 ///
@@ -26,6 +27,7 @@ use archors_tracer::{
 /// - 196, 204,
 /// - 205 simple transfer (final tx)
 fn main() -> Result<()> {
+    env_logger::init();
     let block_number = 17190873;
     // Get block to execute (eth_getBlockByNumber).
     let block = get_block_from_cache(block_number)?;
@@ -48,8 +50,9 @@ fn main() -> Result<()> {
                 .collect();
             let code = get_contracts_from_cache(block_number)?;
             let block_hashes = get_blockhashes_from_cache(block_number)?.to_hashmap();
+            let node_oracle = get_node_oracle_from_cache(block_number)?;
 
-            let state = EIP1186MultiProof::from_separate(proofs, code, block_hashes)?;
+            let state = EIP1186MultiProof::from_separate(proofs, code, block_hashes, node_oracle)?;
             let executor = BlockExecutor::load(block, state, PostExecutionProof::Update)?;
             re_execute_block(executor)?;
         }

@@ -6,7 +6,10 @@ use std::{
     path::PathBuf,
 };
 
-use archors_types::state::{RequiredBlockState, StateError};
+use archors_types::{
+    oracle::TrieNodeOracle,
+    state::{RequiredBlockState, StateError},
+};
 use ethers::{
     abi::ethereum_types::FromStrRadixErr,
     types::{Block, Transaction, H160, H256, U64},
@@ -26,7 +29,7 @@ use crate::{
     },
     transferrable::{state_from_parts, TransferrableError},
     types::{BlockHashAccess, BlockHashAccesses, BlockProofs, BlockStateAccesses},
-    utils::{compress, decompress, hex_decode, string_to_h256, UtilsError},
+    utils::{compress, decompress, hex_decode, string_to_h256, UtilsError}, oracle::detect_removed_storage,
 };
 
 static CACHE_DIR: &str = "data/blocks";
@@ -431,6 +434,17 @@ fn save_transferrable_data(target_block: u64, data: RequiredBlockState) -> Resul
     Ok(())
 }
 
+/// Retrieves the node oracle from the cached pre- and post-state proofs.
+pub fn get_node_oracle_from_cache(block: u64) -> Result<TrieNodeOracle, CacheError> {
+    let post = get_post_state_proofs_from_cache(block)?;
+    let pre = get_proofs_from_cache(block)?;
+    let post_state_nodes = detect_removed_storage(pre, post);
+    // Store in oracle.
+    let oracle = TrieNodeOracle::new(post_state_nodes);
+    Ok(oracle)
+}
+
+
 /// Retrieves the accessed-state proofs for a single block from cache.
 pub fn get_proofs_from_cache(block: u64) -> Result<BlockProofs, CacheError> {
     let proof_cache_path = CacheFileNames::new(block).prior_block_state_proofs();
@@ -442,7 +456,6 @@ pub fn get_proofs_from_cache(block: u64) -> Result<BlockProofs, CacheError> {
     let block_proofs = serde_json::from_reader(reader)?;
     Ok(block_proofs)
 }
-
 
 /// Retrieves the post-state accessed-state proofs for a single block from cache.
 /// This can be used to debug the block executor and proof update mechanisms.
@@ -478,7 +491,7 @@ pub fn get_block_from_cache(block: u64) -> Result<Block<Transaction>, CacheError
     })?;
     let reader = BufReader::new(file);
     let mut block: Block<Transaction> = serde_json::from_reader(reader)?;
-    block.transactions.sort_by_key(|tx|tx.nonce);
+    block.transactions.sort_by_key(|tx| tx.nonce);
     Ok(block)
 }
 
