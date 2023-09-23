@@ -3,12 +3,14 @@ use std::collections::HashMap;
 use std::str::FromStr;
 
 use archors_types::execution::{EvmStateError, StateForEvm};
+use archors_types::oracle::TrieNodeOracle;
 use archors_types::proof::{DisplayProof, DisplayStorageProof};
 use archors_types::utils::{
     eh256_to_ru256, eu256_to_ru256, eu64_to_ru256, rb160_to_eh160, ru256_to_eh256,
 };
 use ethers::types::{EIP1186ProofResponse, H160, H256, U256 as eU256, U64};
 use ethers::utils::keccak256;
+use log::{debug, info};
 use revm::primitives::{
     Account, AccountInfo, Bytecode, BytecodeState, Bytes, HashMap as rHashMap, B160, B256, U256,
 };
@@ -17,6 +19,8 @@ use rlp_derive::{RlpDecodable, RlpEncodable};
 use serde::Deserialize;
 use thiserror::Error;
 
+use crate::oracle::OracleTask;
+use crate::proof::ProofOutcome;
 use crate::utils::hex_encode;
 use crate::{
     proof::{Intent, MultiProof, ProofError},
@@ -25,7 +29,7 @@ use crate::{
 
 #[derive(Debug, Error)]
 pub enum MultiProofError {
-    #[error("Unable to update account proof for address{address}: {source}")]
+    #[error("Unable to update account proof for address {address}: {source}")]
     AccountProofError { source: ProofError, address: String },
     #[error("Unable to update storage proof for address {address}, key {key}: {source}")]
     StorageProofError {
@@ -61,6 +65,8 @@ pub struct EIP1186MultiProof {
     pub code: HashMap<H256, Vec<u8>>,
     /// Map of block number -> block hash
     pub block_hashes: HashMap<U64, H256>,
+    /// Oracle based nodes cached for trie deletions.
+    pub node_oracle: TrieNodeOracle,
 }
 
 impl EIP1186MultiProof {
@@ -71,6 +77,7 @@ impl EIP1186MultiProof {
         proofs: Vec<EIP1186ProofResponse>,
         code: HashMap<H256, Vec<u8>>,
         block_hashes: HashMap<U64, H256>,
+        node_oracle: TrieNodeOracle,
     ) -> Result<Self, MultiProofError> {
         let mut account_proofs = MultiProof::default();
         let mut storage_proofs: HashMap<H160, MultiProof> = HashMap::default();
@@ -107,6 +114,7 @@ impl EIP1186MultiProof {
             storage,
             code,
             block_hashes,
+            node_oracle,
         })
     }
     /// Get the state root. If changes have been made to the trie, the state root will
@@ -122,10 +130,11 @@ impl EIP1186MultiProof {
         address: &B160,
         slot_key: U256,
         slot_value: U256,
-    ) -> Result<H256, MultiProofError> {
+    ) -> Result<ProofOutcome, MultiProofError> {
         let key = ru256_to_eh256(slot_key);
-        let path = keccak256(key);
-        let intent = match slot_value == U256::default(){
+        let path = H256::from(keccak256(&key));
+        debug!("Updating storage proof for key {}", hex_encode(key));
+        let intent = match slot_value == U256::default() {
             true => Intent::Remove,
             false => Intent::Modify(slot_rlp_from_value(slot_value)),
         };
@@ -133,14 +142,17 @@ impl EIP1186MultiProof {
             .storage_proofs
             .get_mut(&rb160_to_eh160(address))
             .ok_or_else(|| MultiProofError::NoAccount(hex_encode(address).to_string()))?;
-        proof.traverse(H256::from(path), &intent).map_err(|e| {
+        proof.traverse(path, Some(key), &intent).map_err(|e| {
             MultiProofError::StorageProofError {
                 source: e,
                 address: hex_encode(address),
                 key: hex_encode(key),
             }
         })?;
-        Ok(proof.root)
+        Ok(match &proof.oracle_task {
+            Some(task) => ProofOutcome::Task(task.to_owned()),
+            None => ProofOutcome::Root(proof.root),
+        })
     }
 
     /// Update the account multiproof so that the values in the provided account match.
@@ -150,12 +162,13 @@ impl EIP1186MultiProof {
         address: &B160,
         account: AccountData,
     ) -> Result<H256, MultiProofError> {
+        debug!("Updating account proof for address {}", hex_encode(address));
         let path = keccak256(address);
         // Even if SELFDESCTRUCT is used, Intent::Remove is not used because the account is kept
         // in the trie (with null storage/code hashes).
         let intent = Intent::Modify(account.rlp_bytes().into());
         self.account_proofs
-            .traverse(path.into(), &intent)
+            .traverse(path.into(), None, &intent)
             .map_err(|e| MultiProofError::AccountProofError {
                 source: e,
                 address: hex_encode(address),
@@ -176,17 +189,34 @@ impl EIP1186MultiProof {
         address: &B160,
         account_updates: Account,
     ) -> Result<H256, MultiProofError> {
+        let address_eh = rb160_to_eh160(address);
         let existing_account = self
             .accounts
-            .get(&rb160_to_eh160(address))
+            .get(&address_eh)
             .ok_or_else(|| MultiProofError::NoAccount(hex_encode(address)))?
             .clone();
         let mut storage_hash = existing_account.storage_hash;
+        let mut tasks: Vec<OracleTask> = vec![];
         for (key, slot) in account_updates.storage {
             if slot.is_changed() {
-                storage_hash = self.update_storage_proof(address, key, slot.present_value)?
+                match self.update_storage_proof(address, key, slot.present_value)? {
+                    ProofOutcome::Root(hash) => storage_hash = hash,
+                    ProofOutcome::Task(task) => tasks.push(task),
+                }
             }
         }
+        for task in tasks {
+            debug!("Looking up node in oracle");
+            let proof = self
+                .storage_proofs
+                .get_mut(&address_eh)
+                .expect("No account");
+            proof.traverse_oracle_update(task)?;
+            //let oracled_node_hash = task.complete_task(partially_updated, &self.node_oracle);
+            storage_hash = proof.root;
+            todo!("Bubble up the hash to the storage root");
+        }
+
         let updated_account = AccountData {
             nonce: account_updates.info.nonce.into(),
             balance: account_updates.info.balance,
@@ -292,6 +322,8 @@ impl StateForEvm for EIP1186MultiProof {
                 .apply_account_delta(&address, account_updates)
                 .map_err(|e| EvmStateError::PostRoot(e.to_string()))?;
         }
+
+        info!("Post-execution state root computed");
         Ok(B256::from(root))
     }
 
@@ -349,12 +381,24 @@ mod test {
         let file = File::open(&path).expect(&format!("no proof found at {}", path));
         let reader = BufReader::new(&file);
         let proof = serde_json::from_reader(reader).expect("could not parse proof");
-        EIP1186MultiProof::from_separate(vec![proof], HashMap::new(), HashMap::new()).unwrap()
+        EIP1186MultiProof::from_separate(
+            vec![proof],
+            HashMap::new(),
+            HashMap::new(),
+            TrieNodeOracle::default(),
+        )
+        .unwrap()
     }
 
     fn load_proof_str(string: &str) -> EIP1186MultiProof {
         let proof = serde_json::from_str(string).expect("could not parse proof");
-        EIP1186MultiProof::from_separate(vec![proof], HashMap::new(), HashMap::new()).unwrap()
+        EIP1186MultiProof::from_separate(
+            vec![proof],
+            HashMap::new(),
+            HashMap::new(),
+            TrieNodeOracle::default(),
+        )
+        .unwrap()
     }
 
     const PROOF_1: &'static str = r#"{
