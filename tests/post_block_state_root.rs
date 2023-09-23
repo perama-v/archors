@@ -3,15 +3,15 @@ use std::str::FromStr;
 use archors_inventory::{
     cache::{
         get_block_from_cache, get_blockhashes_from_cache, get_contracts_from_cache,
-        get_proofs_from_cache,
+        get_post_state_proofs_from_cache, get_proofs_from_cache, get_node_oracle_from_cache,
     },
     utils::hex_encode,
 };
 use archors_multiproof::{EIP1186MultiProof, StateForEvm};
 use archors_tracer::trace::{BlockExecutor, PostExecutionProof};
-use archors_types::utils::rb160_to_eh160;
-use ethers::types::{H160, H256};
-use revm::primitives::{Account, AccountInfo, HashMap as rHashMap, B160, B256, U256};
+use archors_types::proof::DisplayProof;
+use ethers::types::{EIP1186ProofResponse, H160, H256};
+use log::info;
 
 /**
 Loads the state multiproof, executes the block, updates the multiproof for all changes
@@ -38,9 +38,10 @@ fn test_single_account_update_from_block_17190873() {
     let block_hashes = get_blockhashes_from_cache(block_number)
         .unwrap()
         .to_hashmap();
+    let node_oracle = get_node_oracle_from_cache(block_number).unwrap();
 
     let state: EIP1186MultiProof =
-        EIP1186MultiProof::from_separate(proofs, code, block_hashes).unwrap();
+        EIP1186MultiProof::from_separate(proofs, code, block_hashes, node_oracle).unwrap();
 
     let address = H160::from_str("0x00000000000000adc04c56bf30ac9d3c0aaf14dc").unwrap();
 
@@ -53,7 +54,7 @@ fn test_single_account_update_from_block_17190873() {
 
     // Check storage root for account after block execution (rooted in block 17190873).
     let executor = BlockExecutor::load(block, state, PostExecutionProof::UpdateAndIgnore).unwrap();
-    let post_state = executor.trace_transaction(2).unwrap();
+    let post_state = executor.trace_block_silent().unwrap();
 
     let computed_storage_root_17190873 = post_state.storage_proofs.get(&address).unwrap().root;
     let known_storage_root_17190873 =
@@ -66,6 +67,90 @@ fn test_single_account_update_from_block_17190873() {
             "0xfe073a4a8a654ccc9ca8e39369abc3b9919fde0aa58577acb685c63e0603a5a1",
         )
         .unwrap();
+}
+
+/// Tests post-execution storage roots for each account. Multiproof updates are all applied
+/// after the block is executed. Post-execution roots can therefore be individually checked
+/// against those obtainable by calling eth_getProof on the block (they are cached for this block).
+#[test]
+#[ignore]
+fn test_individual_account_updates_from_block_17190873() {
+    std::env::set_var("RUST_LOG", "debug");
+    env_logger::init();
+    let block_number = 17190873;
+    let block = get_block_from_cache(block_number).unwrap();
+    let proofs = get_proofs_from_cache(block_number)
+        .unwrap()
+        .proofs
+        .into_values()
+        .collect();
+    let code = get_contracts_from_cache(block_number).unwrap();
+    let block_hashes = get_blockhashes_from_cache(block_number)
+        .unwrap()
+        .to_hashmap();
+    let node_oracle = get_node_oracle_from_cache(block_number).unwrap();
+
+    let state: EIP1186MultiProof =
+        EIP1186MultiProof::from_separate(proofs, code, block_hashes, node_oracle).unwrap();
+
+    // Check storage root for accounts after block execution (rooted in block 17190873).
+    let executor = BlockExecutor::load(block, state, PostExecutionProof::UpdateAndIgnore).unwrap();
+    let computed_proofs = executor.trace_block_silent().unwrap();
+
+    let mut expected_proofs: Vec<EIP1186ProofResponse> =
+        get_post_state_proofs_from_cache(block_number)
+            .unwrap()
+            .proofs
+            .into_values()
+            .collect();
+    expected_proofs.sort_by_key(|p| p.address);
+
+    let account_sum = expected_proofs.len();
+    for (index, expected) in expected_proofs.into_iter().enumerate() {
+        let address = expected.address;
+        let computed_storage = computed_proofs.storage_proofs.get(&address).unwrap();
+        println!("Finished account {} of {}", index, account_sum);
+        if expected.storage_hash != computed_storage.root {
+            for storage in expected.storage_proof {
+                let expected_proof =
+                    DisplayProof::init(storage.proof.into_iter().map(|p| p.to_vec()).collect());
+                println!("\n\nkey={}", hex_encode(storage.key),);
+                let key_string: String = hex_encode(storage.key.as_bytes());
+                let address_string: String = hex_encode(address.as_bytes());
+                let computed_proof = computed_proofs
+                    .print_storage_proof(&address_string, &key_string)
+                    .unwrap();
+
+                if computed_proof.storage != expected_proof {
+                    println!(
+                        "Expected: {}\nGot: {}",
+                        expected_proof, computed_proof.storage
+                    );
+                    panic!()
+                    /*
+                    Current issue:
+                    acc=0x0a6dd5d5a00d6cb0678a4af507ba79a517d5eb64
+                    key=0x0381163500ec1bb2a711ed278aa3caac8cd61ce95bc6c4ce50958a5e1a83494b
+                    value -> zero. Needs to be removed not stored as null value.
+                     */
+                }
+            }
+
+            assert_eq!(
+                expected.storage_hash,
+                computed_storage.root,
+                "Storage hash for account {} incorrect (check number {})",
+                hex_encode(address),
+                index + 1
+            );
+            panic!(
+                "\n\nBad storage root. index={} address={}",
+                index,
+                hex_encode(address),
+            );
+        }
+
+    }
 }
 
 #[test]
