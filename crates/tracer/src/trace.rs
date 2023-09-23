@@ -7,6 +7,7 @@ use archors_types::{
     utils::hex_encode,
 };
 use ethers::types::{Block, Transaction, H256};
+use log::info;
 use revm::primitives::{Account, HashMap as rHashMap, B160, B256, U256};
 use thiserror::Error;
 
@@ -158,6 +159,7 @@ impl<T: StateForEvm> BlockExecutor<T> {
             // Update a proof object with state that changed after a transaction was executed.
             post_block_state_delta.append_tx_changes(post_tx.state)?;
         }
+        info!("block re-execution complete");
         match self.root_check {
             PostExecutionProof::Update => {
                 let expected_root = self.block.state_root;
@@ -185,6 +187,7 @@ fn post_root_ok(&header_root: &H256, computed_root: &B256) -> Result<(), TraceEr
             header_root: hex_encode(header_root),
         });
     }
+    info!("Post-execution state roof verified.");
     Ok(())
 }
 
