@@ -8,7 +8,6 @@ use archors_tracer::{
     state::BlockProofsBasic,
     trace::{BlockExecutor, PostExecutionProof},
 };
-use log::info;
 
 /// Consume one block state proof.
 ///

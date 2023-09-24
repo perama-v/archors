@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::str::FromStr;
 
 use archors_types::execution::{EvmStateError, StateForEvm};
-use archors_types::oracle::TrieNodeOracle;
+use archors_types::oracle::{OracleTarget, TrieNodeOracle};
 use archors_types::proof::{DisplayProof, DisplayStorageProof};
 use archors_types::utils::{
     eh256_to_ru256, eu256_to_ru256, eu64_to_ru256, rb160_to_eh160, ru256_to_eh256,
@@ -138,11 +138,16 @@ impl EIP1186MultiProof {
             true => Intent::Remove,
             false => Intent::Modify(slot_rlp_from_value(slot_value)),
         };
+        let address_eh = rb160_to_eh160(address);
         let proof = self
             .storage_proofs
-            .get_mut(&rb160_to_eh160(address))
+            .get_mut(&address_eh)
             .ok_or_else(|| MultiProofError::NoAccount(hex_encode(address).to_string()))?;
-        proof.traverse(path, Some(key), &intent).map_err(|e| {
+        let oracle_target = Some(OracleTarget {
+            address: address_eh,
+            key,
+        });
+        proof.traverse(path, oracle_target, &intent).map_err(|e| {
             MultiProofError::StorageProofError {
                 source: e,
                 address: hex_encode(address),
@@ -188,7 +193,10 @@ impl EIP1186MultiProof {
         address: &B160,
         account_updates: Account,
     ) -> Result<H256, MultiProofError> {
-        debug!("Account proof update started for address {}", hex_encode(address));
+        debug!(
+            "Account proof update started for address {}",
+            hex_encode(address)
+        );
         let address_eh = rb160_to_eh160(address);
         let existing_account = self
             .accounts
@@ -206,10 +214,10 @@ impl EIP1186MultiProof {
             }
         }
         // Start with oracle tasks with deepest traversal depth. This prevents tasks from clashing.
-        tasks.sort_by_key(|x|x.traversal_index);
+        tasks.sort_by_key(|x| x.traversal_index);
         let task_count = tasks.len();
-        for task in tasks.into_iter().rev() {
-            debug!("Starting {}",task);
+        for (index,task) in tasks.into_iter().rev().enumerate() {
+            debug!("Starting {} ({} of {})", task, index + 1, task_count);
             let proof = self
                 .storage_proofs
                 .get_mut(&address_eh)
@@ -219,7 +227,11 @@ impl EIP1186MultiProof {
             storage_hash = proof.root;
         }
         if task_count != 0 {
-            debug!("Finished {} oracle task(s) for account {}", task_count, hex_encode(address));
+            debug!(
+                "Finished {} oracle task(s) for account {}",
+                task_count,
+                hex_encode(address)
+            );
         }
 
         let updated_account = AccountData {

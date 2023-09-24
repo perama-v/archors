@@ -34,11 +34,10 @@
 use std::{collections::HashMap, fmt::Display};
 
 use archors_types::oracle::TrieNodeOracle;
-use ethers::types::H256;
+use ethers::types::{H160, H256};
 use serde::{Deserialize, Serialize};
 
 use crate::{node::VisitedNode, proof::Node, utils::hex_encode};
-
 
 /// A node that has been flagged as requiring an oracle to be updated.
 ///
@@ -50,6 +49,8 @@ use crate::{node::VisitedNode, proof::Node, utils::hex_encode};
 /// fulfilled starting with the task with the highest traversal index.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct OracleTask {
+    /// Address involved
+    pub address: H160,
     /// Storage key involved
     pub key: H256,
     /// The index into the trie path that matches the node that needs to be looked up.
@@ -58,14 +59,23 @@ pub struct OracleTask {
 
 impl Display for OracleTask {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Oracle task for key {} at traversal index {}", hex_encode(self.key), self.traversal_index)
+        write!(
+            f,
+            "oracle task for key {} at traversal index {}",
+            hex_encode(self.key),
+            self.traversal_index
+        )
     }
 }
 
 impl OracleTask {
     /// Generate a new task.
-    pub fn new(key: H256, node: &VisitedNode) -> Self {
-        OracleTask { key, traversal_index: node.traversal_record.visiting_index() - 1 }
+    pub fn new(address: H160, key: H256, node: &VisitedNode) -> Self {
+        OracleTask {
+            address,
+            key,
+            traversal_index: node.traversal_record.visiting_index() - 1,
+        }
     }
     /// Gets the node from the oracle, performs checks and returns the node hash.
     ///

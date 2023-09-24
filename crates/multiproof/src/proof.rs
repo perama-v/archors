@@ -3,7 +3,10 @@
 
 use std::{collections::HashMap, fmt::Display};
 
-use archors_types::{oracle::TrieNodeOracle, proof::DisplayProof};
+use archors_types::{
+    oracle::{OracleTarget, TrieNodeOracle},
+    proof::DisplayProof,
+};
 use archors_verify::{
     eip1186::Account,
     path::{
@@ -30,6 +33,10 @@ use crate::{
 pub enum ProofError {
     #[error("Branch does not have enough items")]
     BranchItemMissing,
+    #[error("Expected branch path to match while inserting oracle data.")]
+    BadBranchInOracleTask,
+    #[error("Expected extension path to match while inserting oracle data.")]
+    BadExtensionInOracleTask,
     #[error("Extension node has no items")]
     ExtensionHasNoItems,
     #[error("Extension node has no next node")]
@@ -40,8 +47,12 @@ pub enum ProofError {
         computed: String,
         node: Bytes,
     },
-    #[error("Unable to retrieve node using node hash {0}")]
-    NoNodeForHash(String),
+    #[error("Unable to retrieve oracle node using node hash {0}")]
+    NoOracleNodeForHash(String),
+    #[error("Unable to retrieve proof node using node hash {0}")]
+    NoProofNodeForHash(String),
+    #[error("Unable to retrieve view node using node hash {0}")]
+    NoViewNodeForHash(String),
     #[error("PathError {0}")]
     PathError(#[from] PathError),
     #[error("Leaf node has no final path to traverse")]
@@ -56,12 +67,18 @@ pub enum ProofError {
     FinalExtension,
     #[error("The leaf node has no data")]
     LeafHasNoData,
+    #[error("Unexpected leaf when traversing proof to insert oracle data")]
+    LeafInOracleTask,
     #[error("The leaf data does not match the expected data")]
     IncorrectLeafData,
     #[error("ModifyError {0}")]
     ModifyError(#[from] ModifyError),
     #[error("NodeError {0}")]
     NodeError(#[from] NodeError),
+    #[error(
+        "NoNodeInOracle: The oracle was expected to have a node for address {address} key {key}"
+    )]
+    NoNodeInOracle { address: String, key: String },
 }
 
 #[derive(Debug, Error)]
@@ -154,7 +171,7 @@ impl MultiProof {
     pub fn traverse(
         &mut self,
         path: H256,
-        path_preimage: Option<H256>,
+        oracle_target: Option<OracleTarget>,
         intent: &Intent,
     ) -> Result<(), ProofError> {
         let mut traversal = NibblePath::init(path.as_bytes());
@@ -165,7 +182,7 @@ impl MultiProof {
             let next_node_rlp = self
                 .data
                 .get(&next_node_hash)
-                .ok_or(ProofError::NoNodeForHash(hex_encode(next_node_hash)))?;
+                .ok_or(ProofError::NoProofNodeForHash(hex_encode(next_node_hash)))?;
             let next_node: Vec<Vec<u8>> = rlp::decode_list(next_node_rlp);
             match NodeKind::deduce(&next_node)? {
                 kind @ NodeKind::Branch => {
@@ -184,7 +201,7 @@ impl MultiProof {
                     match (is_exclusion_proof, intent) {
                         (true, Intent::Modify(new_rlp_value)) => {
                             self.apply_changes(
-                                path_preimage,
+                                None,
                                 Change::BranchExclusionToInclusion(new_rlp_value.clone()),
                                 &visited_nodes,
                             )?;
@@ -223,7 +240,7 @@ impl MultiProof {
                         }
                         (SubPathDiverges(divergent_nibble_index), Intent::Modify(new_value)) => {
                             self.apply_changes(
-                                path_preimage,
+                                None,
                                 Change::ExtensionExclusionToInclusion {
                                     new_value: new_value.clone(),
                                     divergent_nibble_index,
@@ -262,7 +279,7 @@ impl MultiProof {
                         }
                         (FullPathMatches, Intent::Modify(new_value)) => {
                             self.apply_changes(
-                                path_preimage,
+                                None,
                                 Change::LeafInclusionModify(new_value.clone()),
                                 &visited_nodes,
                             )?;
@@ -273,7 +290,7 @@ impl MultiProof {
                         }
                         (FullPathMatches, Intent::Remove) => {
                             self.apply_changes(
-                                path_preimage,
+                                oracle_target,
                                 Change::LeafInclusionToExclusion,
                                 &visited_nodes,
                             )?;
@@ -292,7 +309,7 @@ impl MultiProof {
                             Intent::Modify(new_rlp_value),
                         ) => {
                             self.apply_changes(
-                                path_preimage,
+                                None,
                                 Change::LeafExclusionToInclusion {
                                     new_value: new_rlp_value.clone(),
                                     divergent_nibble_index,
@@ -321,90 +338,43 @@ impl MultiProof {
     /// This is only used when applying an oracle based updated.
     ///
     /// ## Algorithm
-    /// 1. Traverse the path in the oracle to the required index
-    /// 2. Grab the node at that index. Hash it.
-    /// 3. Insert oracle nodes for this proof into the proof map (at this index and beyond).
-    /// 4. Traverse the path in the (as yet not updated) proof to the required index.
-    /// 5. In the parent of the node being updated, update the hash to the oracle-based hash
+    /// - Get the node from the oracle.
+    /// - Traverse the path in the (as yet not updated) proof to the required index.
+    /// - Insert the new node
+    /// - In the parent of the node being updated, update the hash to the oracle-based hash
     /// (self.update_node_with_child_hash)
-    /// 6. Cascade remaining changes to the root
+    /// - Cascade remaining changes to the root
     ///
-    /// During future traversals, this oracle-based node will then be traversed.
+    /// During future traversals, this oracle-based node would then be traversed. However, this
+    /// will not arise because the oracle updates are applied deepest-first.
     pub fn traverse_oracle_update(
         &mut self,
         task: OracleTask,
         oracle: &TrieNodeOracle,
     ) -> Result<(), ProofError> {
-        let path: H256 = keccak256(&task.key).into();
-        let mut oracle_traversal = NibblePath::init(path.as_bytes());
-        let mut next_oracle_node_hash = todo!();
-        let mut obtained_target_oracle_node = false;
-        let mut target_node_hash: Option<&H256> = None;
         // Traverse the oracle. Start near root, follow path toward leaves.
-        loop {
-            let next_oracle_node_rlp = oracle
-                .0
-                .get(&next_oracle_node_hash)
-                .ok_or(ProofError::NoNodeForHash(hex_encode(next_oracle_node_hash)))?;
-            let next_oracle_node: Vec<Vec<u8>> = rlp::decode_list(next_oracle_node_rlp);
-            if oracle_traversal.visiting_index() >= task.traversal_index {
-                // Copy nodes from oracle to proof if they are past the oracle-requiring point.
-                self.data
-                    .insert(next_oracle_node_hash, next_oracle_node_rlp.clone());
-
-                if !obtained_target_oracle_node {
-                    target_node_hash = Some(&next_oracle_node_hash);
-                    obtained_target_oracle_node = true;
-                }
+        let oracle_node = oracle.lookup_node(task.address, task.key).ok_or_else(|| {
+            ProofError::NoNodeInOracle {
+                address: hex_encode(task.address),
+                key: hex_encode(task.key),
             }
-            match NodeKind::deduce(&next_oracle_node)? {
-                NodeKind::Branch => {
-                    let item_index = oracle_traversal.visit_path_nibble()? as usize;
-                    let item = next_oracle_node
-                        .get(item_index)
-                        .ok_or(ProofError::BranchItemMissing)?;
+        })?;
+        let oracle_node_hash = keccak256(oracle_node);
 
-                    let is_exclusion_proof = item.is_empty();
-                    match is_exclusion_proof {
-                        true => break,
-                        false => {
-                            // Continue traversing
-                            next_oracle_node_hash = H256::from_slice(item);
-                        }
-                    }
-                }
-                NodeKind::Extension => {
-                    let extension = next_oracle_node
-                        .get(0)
-                        .ok_or(ProofError::ExtensionHasNoItems)?;
-                    match oracle_traversal.match_or_mismatch(extension)? {
-                        SubPathMatches => {
-                            let item = next_oracle_node
-                                .get(1)
-                                .ok_or(ProofError::ExtensionHasNoNextNode)?;
-                            next_oracle_node_hash = H256::from_slice(item);
-                            oracle_traversal.skip_extension_node_nibbles(extension)?;
-                        }
-                        SubPathDiverges(_) => continue,
-                        FullPathMatches => break,
-                        FullPathDiverges(_) => break,
-                    }
-                }
-                NodeKind::Leaf => break,
-            }
-        }
         // Traverse the proof. Once the oracle-requiring node is reached, replace and cascade changes.
+        let path: H256 = keccak256(&task.key).into();
         let mut traversal = NibblePath::init(path.as_bytes());
         let mut visited_nodes: Vec<VisitedNode> = vec![];
         let mut next_node_hash = self.root;
+        // Gather the list of nodes that require updating.
         loop {
-            let next_node_rlp = oracle
-                .0
+            let next_node_rlp = self
+                .data
                 .get(&next_node_hash)
-                .ok_or(ProofError::NoNodeForHash(hex_encode(next_node_hash)))?;
+                .ok_or(ProofError::NoOracleNodeForHash(hex_encode(next_node_hash)))?;
             let next_node: Vec<Vec<u8>> = rlp::decode_list(next_node_rlp);
             if traversal.visiting_index() >= task.traversal_index {
-                // Stop traversal.
+                // Traversal has reached the node to be replaced.
                 break;
             }
             match NodeKind::deduce(&next_node)? {
@@ -413,10 +383,16 @@ impl MultiProof {
                     let item = next_node
                         .get(item_index)
                         .ok_or(ProofError::BranchItemMissing)?;
-
+                    let traversal_record = traversal.clone();
+                    visited_nodes.push(VisitedNode {
+                        kind: NodeKind::Branch,
+                        node_hash: next_node_hash,
+                        item_index,
+                        traversal_record,
+                    });
                     let is_exclusion_proof = item.is_empty();
                     match is_exclusion_proof {
-                        true => break,
+                        true => return Err(ProofError::BadBranchInOracleTask),
                         false => {
                             // Continue traversing
                             next_node_hash = H256::from_slice(item);
@@ -424,7 +400,14 @@ impl MultiProof {
                     }
                 }
                 NodeKind::Extension => {
+                    let traversal_record = traversal.clone();
                     let extension = next_node.get(0).ok_or(ProofError::ExtensionHasNoItems)?;
+                    visited_nodes.push(VisitedNode {
+                        kind: NodeKind::Extension,
+                        node_hash: next_node_hash,
+                        item_index: 1,
+                        traversal_record,
+                    });
                     match traversal.match_or_mismatch(extension)? {
                         SubPathMatches => {
                             let item =
@@ -432,22 +415,19 @@ impl MultiProof {
                             next_node_hash = H256::from_slice(item);
                             traversal.skip_extension_node_nibbles(extension)?;
                         }
-                        SubPathDiverges(_) => continue,
-                        FullPathMatches => break,
-                        FullPathDiverges(_) => break,
+                        _ => return Err(ProofError::BadExtensionInOracleTask),
                     }
                 }
-                NodeKind::Leaf => break,
+                NodeKind::Leaf => return Err(ProofError::LeafInOracleTask),
             }
         }
-        let mut updated_hash = match target_node_hash {
-            Some(h) => h.0,
-            None => todo!("Error - failed to find node in oracle."),
-        };
+        // The first update is to a node whose child is now the oracle-based node.
+        let mut updated_hash = oracle_node_hash;
         // Update all the nodes that were traversed to get to the updated node.
-        for outdated in visited_nodes.iter().rev().skip(1) {
+        for outdated in visited_nodes.iter().rev() {
             updated_hash = self.update_node_with_child_hash(outdated, &updated_hash)?;
         }
+        // Update the storage root.
         self.root = updated_hash.into();
         Ok(())
     }
@@ -460,7 +440,7 @@ impl MultiProof {
     /// value, and associated removal or addition of nodes.
     fn apply_changes(
         &mut self,
-        key: Option<H256>,
+        oracle_target: Option<OracleTarget>,
         change: Change,
         visited: &[VisitedNode],
     ) -> Result<(), ModifyError> {
@@ -594,19 +574,16 @@ impl MultiProof {
                 //   - If extension, remove that
                 //   - If branch, go to 1.
 
-                // Perform updates requiring structural changes to the trie.
-                let removed_leaf_index = visited.len() - 1;
                 // Modify the parent (and higher ancestors if needed).
-
                 let (highest_hash, nodes_processed) =
-                    self.process_leaf_child_removal(key, visited, removed_leaf_index - 1)?;
+                    self.process_leaf_child_removal(oracle_target, visited)?;
 
                 // Now just perform simple hash updates.
                 let mut updated_hash = highest_hash;
                 for outdated in visited.iter().rev().skip(nodes_processed) {
                     updated_hash = self.update_node_with_child_hash(outdated, &updated_hash)?;
+                    self.root = updated_hash.into();
                 }
-                self.root = updated_hash.into();
             }
         }
 
@@ -768,87 +745,96 @@ impl MultiProof {
             Ok(common_extension_hash)
         }
     }
-    /// Modifies a (parent) node with a removed child. Returns the hash of the
-    /// modified node and it's position in the traversal.
+    /// Modifies a (parent) node with a removed child. Accepts a list of nodes visted in the
+    /// traversal, where the final element is the leaf. Returns the hash of the
+    /// modified node and the number of nodes in the visit record that do not need to be modified
+    /// any more.
     ///
     /// The terms grandparent, parent and sibling all are with respect to the removed child.
     ///
     /// Visited refers to nodes traversed (root to leaf).
-    /// `visit_index` is the index in `visit_record` of the of the node that is the parent.
     fn process_leaf_child_removal(
         &mut self,
-        key_opt: Option<H256>,
+        oracle_target: Option<OracleTarget>,
         visit_record: &[VisitedNode],
-        visit_index: usize,
     ) -> Result<([u8; 32], usize), ModifyError> {
-        if visit_index == 0 {
+        if visit_record.len() == 1 {
             todo!("handle modification when no grandparent exists");
         }
-        let key = match key_opt {
-            Some(k) => k,
+        let target = match oracle_target {
+            Some(t) => t,
             None => todo!("return error: Must have passed a storage key that is being removed."),
         };
 
-        // Perform removal of elements as long as necessary.
-        loop {
-            let visited = visit_record
-                .get(visit_index)
-                .ok_or(ModifyError::NoVisitedNode)?;
-            let outdated_rlp = self
-                .data
-                .get(&visited.node_hash)
-                .ok_or(ModifyError::NoNodeForHash)?;
-            let outdated_node: Vec<Vec<u8>> = rlp::decode_list(&outdated_rlp);
+        let leaf_index = visit_record.len() - 1;
+        let parent_index = leaf_index - 1;
+        let grandparent_index = parent_index - 1;
 
-            if visited.kind != NodeKind::Branch {
-                todo!("Error: Remove leaf child called on non-branch node.")
-            }
+        let parent = visit_record
+            .get(parent_index)
+            .ok_or(ModifyError::NoVisitedNode)?;
+        let outdated_rlp = self
+            .data
+            .get(&parent.node_hash)
+            .ok_or(ModifyError::NoNodeForHash)?;
+        let outdated_node: Vec<Vec<u8>> = rlp::decode_list(&outdated_rlp);
 
-            // [next_node_0, ..., next_node_16, value]
-            let mut updated = Node::default();
-            let mut item_count = 0;
-            let mut non_empty_child_index = 0;
-            // Find where the orphaned sibling leaf belongs in the branch.
-            for (index, item) in outdated_node.into_iter().enumerate() {
-                if index == visited.item_index {
-                    // Erase child
-                    updated.0.push(Item(vec![]));
-                } else {
-                    if !item.is_empty() {
-                        item_count += 1;
-                        non_empty_child_index = index;
-                    }
-                    updated.0.push(Item(item));
+        if parent.kind != NodeKind::Branch {
+            todo!("Error: Remove leaf child called on non-branch node.")
+        }
+
+        // [next_node_0, ..., next_node_16, value]
+        let mut updated = Node::default();
+        let mut item_count = 0;
+        let mut non_empty_child_index = 0;
+        // Find where the orphaned sibling leaf belongs in the branch.
+        for (index, item) in outdated_node.into_iter().enumerate() {
+            if index == parent.item_index {
+                // Erase child
+                updated.0.push(Item(vec![]));
+            } else {
+                if !item.is_empty() {
+                    item_count += 1;
+                    non_empty_child_index = index;
                 }
-            }
-
-            match item_count {
-                0 => todo!("error, not possible"), // Branch should have at least one item.
-                1 => {
-                    // Branch node for deletion.
-                    // Need to attach this single item at some point.
-
-                    let visited_grandparent = visit_record
-                        .get(visit_index - 1)
-                        .ok_or(ModifyError::NoVisitedNode)?;
-
-                    self.oracle_task = Some(OracleTask::new(key, visited_grandparent));
-                    // This node will be updated after the rest of the proof has been updated.
-                    let unchanged_hash = visited_grandparent.node_hash;
-                    return Ok((unchanged_hash.into(), 2));
-                }
-                _ => {
-                    // No special action as the branch does not contain an orphan.
-                    let updated_rlp = updated.to_rlp_list();
-                    let updated_node_hash = keccak256(&updated_rlp);
-                    self.data.insert(updated_node_hash.into(), updated_rlp);
-                    // No further deletions required.
-                    return Ok((updated_node_hash, 1));
-                }
+                updated.0.push(Item(item));
             }
         }
-        unreachable!()
+
+        match item_count {
+            0 => todo!("error, not possible"), // Branch should have at least one item.
+            1 => {
+                // The parent is a branch node for deletion (too few items).
+                // This may require oracle knowledge, so it is returned as a task.
+
+                // Need to attach this single item at some point.
+                let visited_grandparent = visit_record
+                    .get(grandparent_index)
+                    .ok_or(ModifyError::NoVisitedNode)?;
+
+                self.oracle_task = Some(OracleTask::new(
+                    target.address,
+                    target.key,
+                    visited_grandparent,
+                ));
+                // This node will be updated after the rest of the proof has been updated.
+                let unchanged_hash = visited_grandparent.node_hash;
+                // No changes to the trie can be made yet, so all nodes in the proof are said
+                // be taken care of (to be done later as an oracle task.)
+                return Ok((unchanged_hash.into(), visit_record.len()));
+            }
+            _ => {
+                // No special action as the branch does not contain an orphan.
+                let updated_rlp = updated.to_rlp_list();
+                let updated_node_hash = keccak256(&updated_rlp);
+                self.data.insert(updated_node_hash.into(), updated_rlp);
+                // No further deletions required.
+                // Leaf + parent = 3 nodes taken care of.
+                return Ok((updated_node_hash, 2));
+            }
+        }
     }
+
     /**
     When the trie is altered and a parent is removed, the nodes above (grandparent) and
     below (only child) are modified to have a correct path.
@@ -967,7 +953,7 @@ impl MultiProof {
             let next_node_rlp = self
                 .data
                 .get(&next_node_hash)
-                .ok_or(ProofError::NoNodeForHash(hex_encode(next_node_hash)))?;
+                .ok_or(ProofError::NoViewNodeForHash(hex_encode(next_node_hash)))?;
             visited_nodes.push(next_node_rlp.to_vec());
             let next_node: Vec<Vec<u8>> = rlp::decode_list(next_node_rlp);
 
