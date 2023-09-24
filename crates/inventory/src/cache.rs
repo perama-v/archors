@@ -438,9 +438,7 @@ fn save_transferrable_data(target_block: u64, data: RequiredBlockState) -> Resul
 pub fn get_node_oracle_from_cache(block: u64) -> Result<TrieNodeOracle, CacheError> {
     let post = get_post_state_proofs_from_cache(block)?;
     let pre = get_proofs_from_cache(block)?;
-    let post_state_nodes = detect_removed_storage(pre, post);
-    // Store in oracle.
-    let oracle = TrieNodeOracle::new(post_state_nodes);
+    let oracle = detect_removed_storage(pre, post);
     Ok(oracle)
 }
 

@@ -7,7 +7,7 @@ use ethers::types::H256;
 /// The oracle provides this information. The information is obtained and cached with the
 /// block pre-state proofs so that post-state proofs can be computed.
 #[derive(Debug, Default, Clone)]
-pub struct TrieNodeOracle(HashMap<H256, Vec<u8>>);
+pub struct TrieNodeOracle(pub HashMap<H256, Vec<u8>>);
 
 impl TrieNodeOracle {
     pub fn new(data: HashMap<H256, Vec<u8>>) -> Self {

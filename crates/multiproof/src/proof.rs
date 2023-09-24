@@ -3,7 +3,7 @@
 
 use std::{collections::HashMap, fmt::Display};
 
-use archors_types::proof::DisplayProof;
+use archors_types::{oracle::TrieNodeOracle, proof::DisplayProof};
 use archors_verify::{
     eip1186::Account,
     path::{
@@ -151,7 +151,12 @@ impl MultiProof {
     ///
     /// The path preimage is passed so that when a node oracle is required, the oracle task
     /// can be made. This applies to storage proofs only, which can be removed from the trie.
-    pub fn traverse(&mut self, path: H256, path_preimage: Option<H256>, intent: &Intent) -> Result<(), ProofError> {
+    pub fn traverse(
+        &mut self,
+        path: H256,
+        path_preimage: Option<H256>,
+        intent: &Intent,
+    ) -> Result<(), ProofError> {
         let mut traversal = NibblePath::init(path.as_bytes());
         let mut next_node_hash = self.root;
         let mut visited_nodes: Vec<VisitedNode> = vec![];
@@ -314,20 +319,136 @@ impl MultiProof {
     ///
     /// Changes are then made all they way to the root.
     /// This is only used when applying an oracle based updated.
-    pub fn traverse_oracle_update(&mut self, task: OracleTask) -> Result<(), ProofError> {
+    ///
+    /// ## Algorithm
+    /// 1. Traverse the path in the oracle to the required index
+    /// 2. Grab the node at that index. Hash it.
+    /// 3. Insert oracle nodes for this proof into the proof map (at this index and beyond).
+    /// 4. Traverse the path in the (as yet not updated) proof to the required index.
+    /// 5. In the parent of the node being updated, update the hash to the oracle-based hash
+    /// (self.update_node_with_child_hash)
+    /// 6. Cascade remaining changes to the root
+    ///
+    /// During future traversals, this oracle-based node will then be traversed.
+    pub fn traverse_oracle_update(
+        &mut self,
+        task: OracleTask,
+        oracle: &TrieNodeOracle,
+    ) -> Result<(), ProofError> {
         let path: H256 = keccak256(&task.key).into();
-        let mut traversal = NibblePath::init(path.as_bytes());
-        let mut next_node_hash = self.root;
-        let mut visited_nodes: Vec<VisitedNode> = vec![];
-        // Start near root, follow path toward leaves.
+        let mut oracle_traversal = NibblePath::init(path.as_bytes());
+        let mut next_oracle_node_hash = todo!();
+        let mut obtained_target_oracle_node = false;
+        let mut target_node_hash: Option<&H256> = None;
+        // Traverse the oracle. Start near root, follow path toward leaves.
         loop {
-            let next_node_rlp = self
-                .data
+            let next_oracle_node_rlp = oracle
+                .0
+                .get(&next_oracle_node_hash)
+                .ok_or(ProofError::NoNodeForHash(hex_encode(next_oracle_node_hash)))?;
+            let next_oracle_node: Vec<Vec<u8>> = rlp::decode_list(next_oracle_node_rlp);
+            if oracle_traversal.visiting_index() >= task.traversal_index {
+                // Copy nodes from oracle to proof if they are past the oracle-requiring point.
+                self.data
+                    .insert(next_oracle_node_hash, next_oracle_node_rlp.clone());
+
+                if !obtained_target_oracle_node {
+                    target_node_hash = Some(&next_oracle_node_hash);
+                    obtained_target_oracle_node = true;
+                }
+            }
+            match NodeKind::deduce(&next_oracle_node)? {
+                NodeKind::Branch => {
+                    let item_index = oracle_traversal.visit_path_nibble()? as usize;
+                    let item = next_oracle_node
+                        .get(item_index)
+                        .ok_or(ProofError::BranchItemMissing)?;
+
+                    let is_exclusion_proof = item.is_empty();
+                    match is_exclusion_proof {
+                        true => break,
+                        false => {
+                            // Continue traversing
+                            next_oracle_node_hash = H256::from_slice(item);
+                        }
+                    }
+                }
+                NodeKind::Extension => {
+                    let extension = next_oracle_node
+                        .get(0)
+                        .ok_or(ProofError::ExtensionHasNoItems)?;
+                    match oracle_traversal.match_or_mismatch(extension)? {
+                        SubPathMatches => {
+                            let item = next_oracle_node
+                                .get(1)
+                                .ok_or(ProofError::ExtensionHasNoNextNode)?;
+                            next_oracle_node_hash = H256::from_slice(item);
+                            oracle_traversal.skip_extension_node_nibbles(extension)?;
+                        }
+                        SubPathDiverges(_) => continue,
+                        FullPathMatches => break,
+                        FullPathDiverges(_) => break,
+                    }
+                }
+                NodeKind::Leaf => break,
+            }
+        }
+        // Traverse the proof. Once the oracle-requiring node is reached, replace and cascade changes.
+        let mut traversal = NibblePath::init(path.as_bytes());
+        let mut visited_nodes: Vec<VisitedNode> = vec![];
+        let mut next_node_hash = self.root;
+        loop {
+            let next_node_rlp = oracle
+                .0
                 .get(&next_node_hash)
                 .ok_or(ProofError::NoNodeForHash(hex_encode(next_node_hash)))?;
             let next_node: Vec<Vec<u8>> = rlp::decode_list(next_node_rlp);
-            todo!("Replicate or combine with fn traverse")
+            if traversal.visiting_index() >= task.traversal_index {
+                // Stop traversal.
+                break;
+            }
+            match NodeKind::deduce(&next_node)? {
+                NodeKind::Branch => {
+                    let item_index = traversal.visit_path_nibble()? as usize;
+                    let item = next_node
+                        .get(item_index)
+                        .ok_or(ProofError::BranchItemMissing)?;
+
+                    let is_exclusion_proof = item.is_empty();
+                    match is_exclusion_proof {
+                        true => break,
+                        false => {
+                            // Continue traversing
+                            next_node_hash = H256::from_slice(item);
+                        }
+                    }
+                }
+                NodeKind::Extension => {
+                    let extension = next_node.get(0).ok_or(ProofError::ExtensionHasNoItems)?;
+                    match traversal.match_or_mismatch(extension)? {
+                        SubPathMatches => {
+                            let item =
+                                next_node.get(1).ok_or(ProofError::ExtensionHasNoNextNode)?;
+                            next_node_hash = H256::from_slice(item);
+                            traversal.skip_extension_node_nibbles(extension)?;
+                        }
+                        SubPathDiverges(_) => continue,
+                        FullPathMatches => break,
+                        FullPathDiverges(_) => break,
+                    }
+                }
+                NodeKind::Leaf => break,
+            }
         }
+        let mut updated_hash = match target_node_hash {
+            Some(h) => h.0,
+            None => todo!("Error - failed to find node in oracle."),
+        };
+        // Update all the nodes that were traversed to get to the updated node.
+        for outdated in visited_nodes.iter().rev().skip(1) {
+            updated_hash = self.update_node_with_child_hash(outdated, &updated_hash)?;
+        }
+        self.root = updated_hash.into();
         Ok(())
     }
 
@@ -664,7 +785,7 @@ impl MultiProof {
             todo!("handle modification when no grandparent exists");
         }
         let key = match key_opt {
-            Some(k) =>k,
+            Some(k) => k,
             None => todo!("return error: Must have passed a storage key that is being removed."),
         };
 
@@ -755,8 +876,6 @@ impl MultiProof {
     - To add the nibble to the node, the node must be known.
     - Only the hash is known because there is not necessarily a proof for the sibling
     - The sibling node must be obtained from a special cache created for this purpose.
-
-    For the cases that
 
     The nodes are created and updated and the hash of the node closest to the root is
     returned.
@@ -1061,5 +1180,6 @@ mod test {
             0xb,
             grandparent_hash.as_fixed_bytes(),
         );
+        todo!("use fn traverse_oracle_update()");
     }
 }

@@ -133,7 +133,7 @@ impl EIP1186MultiProof {
     ) -> Result<ProofOutcome, MultiProofError> {
         let key = ru256_to_eh256(slot_key);
         let path = H256::from(keccak256(&key));
-        debug!("Updating storage proof for key {}", hex_encode(key));
+        debug!("Storage proof update started for key {}", hex_encode(key));
         let intent = match slot_value == U256::default() {
             true => Intent::Remove,
             false => Intent::Modify(slot_rlp_from_value(slot_value)),
@@ -162,7 +162,6 @@ impl EIP1186MultiProof {
         address: &B160,
         account: AccountData,
     ) -> Result<H256, MultiProofError> {
-        debug!("Updating account proof for address {}", hex_encode(address));
         let path = keccak256(address);
         // Even if SELFDESCTRUCT is used, Intent::Remove is not used because the account is kept
         // in the trie (with null storage/code hashes).
@@ -189,6 +188,7 @@ impl EIP1186MultiProof {
         address: &B160,
         account_updates: Account,
     ) -> Result<H256, MultiProofError> {
+        debug!("Account proof update started for address {}", hex_encode(address));
         let address_eh = rb160_to_eh160(address);
         let existing_account = self
             .accounts
@@ -205,16 +205,21 @@ impl EIP1186MultiProof {
                 }
             }
         }
-        for task in tasks {
-            debug!("Looking up node in oracle");
+        // Start with oracle tasks with deepest traversal depth. This prevents tasks from clashing.
+        tasks.sort_by_key(|x|x.traversal_index);
+        let task_count = tasks.len();
+        for task in tasks.into_iter().rev() {
+            debug!("Starting {}",task);
             let proof = self
                 .storage_proofs
                 .get_mut(&address_eh)
                 .expect("No account");
-            proof.traverse_oracle_update(task)?;
+            proof.traverse_oracle_update(task, &self.node_oracle)?;
             //let oracled_node_hash = task.complete_task(partially_updated, &self.node_oracle);
             storage_hash = proof.root;
-            todo!("Bubble up the hash to the storage root");
+        }
+        if task_count != 0 {
+            debug!("Finished {} oracle task(s) for account {}", task_count, hex_encode(address));
         }
 
         let updated_account = AccountData {
@@ -752,5 +757,19 @@ mod test {
             .unwrap()
             .to_rlp_list();
         assert_eq!(hex_encode(leaf), "0xf39f37a9fe364faab93b216da50a3214154f22a0a2b415b23a84c8169e8b636ee3929171afd498d00028de4544dd705613413f88");
+    }
+
+    /**
+    This account in block 17190873 requires an oracle for internal trie nodes because a key
+    is deleted, causing a branch removal. The missing data must be foreseen and provided as
+    ancillary data called an oracle. This test confirms the use of the oracle to get the
+    correct storage root for the account.
+
+    - account 0x0a6dd5d5a00d6cb0678a4af507ba79a517d5eb64
+    - key 0x0381163500ec1bb2a711ed278aa3caac8cd61ce95bc6c4ce50958a5e1a83494b
+    */
+    #[test]
+    fn test_root_after_storage_change_requiring_oracle() {
+        todo!()
     }
 }

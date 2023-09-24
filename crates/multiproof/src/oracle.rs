@@ -31,13 +31,13 @@
 //! equivalent node.
 //! 6. If they are the same, the new item is accepted and the changes updated to the storage root.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt::Display};
 
 use archors_types::oracle::TrieNodeOracle;
 use ethers::types::H256;
 use serde::{Deserialize, Serialize};
 
-use crate::{node::VisitedNode, proof::Node};
+use crate::{node::VisitedNode, proof::Node, utils::hex_encode};
 
 
 /// A node that has been flagged as requiring an oracle to be updated.
@@ -54,6 +54,12 @@ pub struct OracleTask {
     pub key: H256,
     /// The index into the trie path that matches the node that needs to be looked up.
     pub traversal_index: usize,
+}
+
+impl Display for OracleTask {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Oracle task for key {} at traversal index {}", hex_encode(self.key), self.traversal_index)
+    }
 }
 
 impl OracleTask {
