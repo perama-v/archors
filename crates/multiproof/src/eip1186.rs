@@ -124,7 +124,8 @@ impl EIP1186MultiProof {
     }
     /// Update the storage multiproof for the given account storage key/value pair.
     ///
-    /// Returns the updated storage hash for the account.
+    /// Returns the updated storage hash for the account, or if an update requires an
+    /// oracle lookup, the oracle task is teturned.
     fn update_storage_proof(
         &mut self,
         address: &B160,
@@ -205,9 +206,9 @@ impl EIP1186MultiProof {
             .clone();
         let mut storage_hash = existing_account.storage_hash;
         let mut tasks: Vec<OracleTask> = vec![];
-        for (key, slot) in account_updates.storage {
-            if slot.is_changed() {
-                match self.update_storage_proof(address, key, slot.present_value)? {
+        for (storage_key, storage_value) in account_updates.storage {
+            if storage_value.is_changed() {
+                match self.update_storage_proof(address, storage_key, storage_value.present_value)? {
                     ProofOutcome::Root(hash) => storage_hash = hash,
                     ProofOutcome::Task(task) => tasks.push(task),
                 }
@@ -223,7 +224,7 @@ impl EIP1186MultiProof {
                 .get_mut(&address_eh)
                 .expect("No account");
             proof.traverse_oracle_update(task, &self.node_oracle)?;
-            //let oracled_node_hash = task.complete_task(partially_updated, &self.node_oracle);
+            
             storage_hash = proof.root;
         }
         if task_count != 0 {

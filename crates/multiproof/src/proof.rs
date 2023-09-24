@@ -18,6 +18,7 @@ use ethers::{
     types::{Bytes, H256, U256},
     utils::keccak256,
 };
+use log::debug;
 use rlp::{Encodable, RlpStream};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -352,15 +353,6 @@ impl MultiProof {
         task: OracleTask,
         oracle: &TrieNodeOracle,
     ) -> Result<(), ProofError> {
-        // Traverse the oracle. Start near root, follow path toward leaves.
-        let oracle_node = oracle.lookup_node(task.address, task.key).ok_or_else(|| {
-            ProofError::NoNodeInOracle {
-                address: hex_encode(task.address),
-                key: hex_encode(task.key),
-            }
-        })?;
-        let oracle_node_hash = keccak256(oracle_node);
-
         // Traverse the proof. Once the oracle-requiring node is reached, replace and cascade changes.
         let path: H256 = keccak256(&task.key).into();
         let mut traversal = NibblePath::init(path.as_bytes());
@@ -373,10 +365,7 @@ impl MultiProof {
                 .get(&next_node_hash)
                 .ok_or(ProofError::NoOracleNodeForHash(hex_encode(next_node_hash)))?;
             let next_node: Vec<Vec<u8>> = rlp::decode_list(next_node_rlp);
-            if traversal.visiting_index() >= task.traversal_index {
-                // Traversal has reached the node to be replaced.
-                break;
-            }
+
             match NodeKind::deduce(&next_node)? {
                 NodeKind::Branch => {
                     let item_index = traversal.visit_path_nibble()? as usize;
@@ -420,7 +409,20 @@ impl MultiProof {
                 }
                 NodeKind::Leaf => return Err(ProofError::LeafInOracleTask),
             }
+            if traversal.visiting_index() >= task.traversal_index {
+                // Traversal has reached the node to be replaced.
+                break;
+            }
         }
+        // Traverse the oracle. Start near root, follow path toward leaves.
+        let oracle_node = oracle.lookup_node(task.address, task.key).ok_or_else(|| {
+            ProofError::NoNodeInOracle {
+                address: hex_encode(task.address),
+                key: hex_encode(task.key),
+            }
+        })?;
+        let oracle_node_hash = keccak256(oracle_node);
+
         // The first update is to a node whose child is now the oracle-based node.
         let mut updated_hash = oracle_node_hash;
         // Update all the nodes that were traversed to get to the updated node.
@@ -428,6 +430,7 @@ impl MultiProof {
             updated_hash = self.update_node_with_child_hash(outdated, &updated_hash)?;
         }
         // Update the storage root.
+        debug!("storage root updated via oracle to {}", hex_encode(updated_hash));
         self.root = updated_hash.into();
         Ok(())
     }
