@@ -9,30 +9,30 @@ use ethers::types::H160;
 ///
 /// The oracle stores for each key, the proof nodes at and below the traversal index.
 #[derive(Debug, Default, Clone)]
-pub struct TrieNodeOracle(HashMap<OracleTarget, Vec<u8>>);
+pub struct TrieNodeOracle(HashMap<OracleTarget, Vec<Vec<u8>>>);
 
 impl TrieNodeOracle {
     /// Make an addition to the oracle.
-    pub fn insert_node(&mut self, address: H160, traversal_to_target: Vec<u8>, node: Vec<u8>) {
+    pub fn insert(&mut self, address: H160, traversal_to_target: Vec<u8>, nodes: Vec<Vec<u8>>) {
         self.0.insert(
             OracleTarget {
                 address,
                 traversal_to_target,
             },
-            node,
+            nodes,
         );
     }
     /// Retrieve data from the oracle for a particular address and key.
     ///
     /// The node returned will be the specific node that requires the oracle. This
     /// will be the grandparent of a removed node.
-    pub fn lookup_node(&self, address: H160, traversal_to_target: Vec<u8>) -> Option<&[u8]> {
+    pub fn lookup(&self, address: H160, traversal_to_target: Vec<u8>) -> Option<Vec<Vec<u8>>> {
         self.0
             .get(&OracleTarget {
                 address,
                 traversal_to_target,
             })
-            .map(|x| x.deref())
+            .map(|x| x.to_owned())
     }
 }
 

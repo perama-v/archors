@@ -15,7 +15,7 @@ use ethers::{
     types::{Bytes, H256, U256},
     utils::keccak256,
 };
-use log::debug;
+use log::{debug, warn};
 use rlp::{Encodable, RlpStream};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -39,6 +39,8 @@ pub enum ProofError {
     ExtensionHasNoItems,
     #[error("Extension node has no next node")]
     ExtensionHasNoNextNode,
+    #[error("Oracle lookup response was empty")]
+    EmptyOracleResponse,
     #[error("Unable to insert single proof with root {computed} into multiproof with root {expected} (node {node})")]
     ProofRootMismatch {
         expected: String,
@@ -55,6 +57,8 @@ pub enum ProofError {
     NoTraversalHistory,
     #[error("PathError {0}")]
     PathError(#[from] PathError),
+    #[error("Unable to traverse and confirm key exclusion proof after oracle update {0}")]
+    PostOracleTraversalFailed(String),
     #[error("Leaf node has no final path to traverse")]
     LeafHasNoFinalPath,
     #[error("An inclusion proof was required, but found an exclusion proof")]
@@ -400,11 +404,14 @@ impl MultiProof {
             .history_with_next()
             .map_err(|_| ProofError::NoTraversalHistory)?;
 
-        let oracle_node = oracle
-            .lookup_node(task.address, traversal_for_oracle.to_owned())
+        let oracle_nodes: Vec<Vec<u8>> = oracle
+            .lookup(task.address, traversal_for_oracle.to_owned())
             .ok_or_else(|| ProofError::NoNodeInOracle {
                 task: task.to_string(),
             })?;
+        let oracle_node = oracle_nodes
+            .first()
+            .ok_or_else(|| ProofError::EmptyOracleResponse)?;
         let oracle_node_hash = keccak256(oracle_node);
 
         // The first update is to a node whose child is now the oracle-based node.
@@ -419,6 +426,18 @@ impl MultiProof {
             hex_encode(updated_hash)
         );
         self.root = updated_hash.into();
+
+        // Add nodes to the proof map.
+        for node in oracle_nodes.into_iter() {
+            let hash = keccak256(&node);
+            self.data.insert(H256::from(hash), node);
+        }
+        // Finally finish the traversal, demonstrating that the key is removed from the trie.
+        // The traversal should now have enough information now that the oracle update is complete.
+        self.traverse(path, &Intent::VerifyExclusion)
+            .map_err(|e| ProofError::PostOracleTraversalFailed(e.to_string()))?;
+        warn!("Did not confirm that the oracle data was an exclusion proof.");
+
         Ok(())
     }
 

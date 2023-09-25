@@ -127,12 +127,6 @@ fn test_individual_account_updates_from_block_17190873() {
                         expected_proof, computed_proof.storage
                     );
                     panic!()
-                    /*
-                    Current issue:
-                    acc=0x0a6dd5d5a00d6cb0678a4af507ba79a517d5eb64
-                    key=0x0381163500ec1bb2a711ed278aa3caac8cd61ce95bc6c4ce50958a5e1a83494b
-                    value -> zero. Needs to be removed not stored as null value.
-                     */
                 }
             }
 
