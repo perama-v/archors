@@ -74,7 +74,7 @@ impl OracleTask {
         OracleTask {
             address,
             key,
-            traversal_index: node.traversal_record.visiting_index() - 1,
+            traversal_index: node.traversal_record.visiting_index(),
         }
     }
     /// Gets the node from the oracle, performs checks and returns the node hash.

@@ -368,11 +368,11 @@ impl MultiProof {
 
             match NodeKind::deduce(&next_node)? {
                 NodeKind::Branch => {
+                    let traversal_record = traversal.clone();
                     let item_index = traversal.visit_path_nibble()? as usize;
                     let item = next_node
                         .get(item_index)
                         .ok_or(ProofError::BranchItemMissing)?;
-                    let traversal_record = traversal.clone();
                     visited_nodes.push(VisitedNode {
                         kind: NodeKind::Branch,
                         node_hash: next_node_hash,
