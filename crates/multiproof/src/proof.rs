@@ -430,7 +430,10 @@ impl MultiProof {
             updated_hash = self.update_node_with_child_hash(outdated, &updated_hash)?;
         }
         // Update the storage root.
-        debug!("storage root updated via oracle to {}", hex_encode(updated_hash));
+        debug!(
+            "storage root updated via oracle to {}",
+            hex_encode(updated_hash)
+        );
         self.root = updated_hash.into();
         Ok(())
     }
@@ -769,18 +772,23 @@ impl MultiProof {
             None => todo!("return error: Must have passed a storage key that is being removed."),
         };
 
-        let leaf_index = visit_record.len() - 1;
-        let parent_index = leaf_index - 1;
-        let grandparent_index = parent_index - 1;
+        // Visit_record
+        let leaf_visit_record_index = visit_record.len() - 1;
+        let parent_visit_record_index = leaf_visit_record_index - 1;
+        let grandparent_visit_record_index = parent_visit_record_index - 1;
 
         let parent = visit_record
-            .get(parent_index)
+            .get(parent_visit_record_index)
             .ok_or(ModifyError::NoVisitedNode)?;
         let outdated_rlp = self
             .data
             .get(&parent.node_hash)
             .ok_or(ModifyError::NoNodeForHash)?;
         let outdated_node: Vec<Vec<u8>> = rlp::decode_list(&outdated_rlp);
+        debug!(
+            "Parent branch node has deleted child. rlp is {}",
+            hex_encode(outdated_rlp)
+        );
 
         if parent.kind != NodeKind::Branch {
             todo!("Error: Remove leaf child called on non-branch node.")
@@ -812,7 +820,7 @@ impl MultiProof {
 
                 // Need to attach this single item at some point.
                 let visited_grandparent = visit_record
-                    .get(grandparent_index)
+                    .get(grandparent_visit_record_index)
                     .ok_or(ModifyError::NoVisitedNode)?;
 
                 self.oracle_task = Some(OracleTask::new(
@@ -820,6 +828,13 @@ impl MultiProof {
                     target.key,
                     visited_grandparent,
                 ));
+
+                debug!(
+                    "Creating oracle task {:?}. parent nibble at {}, grandparent nibble at {}",
+                    self.oracle_task,
+                    parent.traversal_record.visiting_index(),
+                    visited_grandparent.traversal_record.visiting_index()
+                );
                 // This node will be updated after the rest of the proof has been updated.
                 let unchanged_hash = visited_grandparent.node_hash;
                 // No changes to the trie can be made yet, so all nodes in the proof are said

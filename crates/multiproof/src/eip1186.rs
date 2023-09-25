@@ -129,15 +129,15 @@ impl EIP1186MultiProof {
     fn update_storage_proof(
         &mut self,
         address: &B160,
-        slot_key: U256,
-        slot_value: U256,
+        storage_key: U256,
+        storage_value: U256,
     ) -> Result<ProofOutcome, MultiProofError> {
-        let key = ru256_to_eh256(slot_key);
+        let key = ru256_to_eh256(storage_key);
         let path = H256::from(keccak256(&key));
         debug!("Storage proof update started for key {}", hex_encode(key));
-        let intent = match slot_value == U256::default() {
+        let intent = match storage_value == U256::default() {
             true => Intent::Remove,
-            false => Intent::Modify(slot_rlp_from_value(slot_value)),
+            false => Intent::Modify(slot_rlp_from_value(storage_value)),
         };
         let address_eh = rb160_to_eh160(address);
         let proof = self
@@ -156,7 +156,13 @@ impl EIP1186MultiProof {
             }
         })?;
         Ok(match &proof.oracle_task {
-            Some(task) => ProofOutcome::Task(task.to_owned()),
+            Some(task) => {
+                let task_outcome = task.to_owned();
+                // Wipe the task from the multiproof.
+                proof.oracle_task = None;
+                ProofOutcome::Task(task_outcome)
+            }
+            ,
             None => ProofOutcome::Root(proof.root),
         })
     }
@@ -210,7 +216,9 @@ impl EIP1186MultiProof {
             if storage_value.is_changed() {
                 match self.update_storage_proof(address, storage_key, storage_value.present_value)? {
                     ProofOutcome::Root(hash) => storage_hash = hash,
-                    ProofOutcome::Task(task) => tasks.push(task),
+                    ProofOutcome::Task(task) =>{
+                        debug!("Task received for key {}", hex_encode(&storage_key.to_be_bytes_vec()));
+                        tasks.push(task)},
                 }
             }
         }
@@ -224,7 +232,7 @@ impl EIP1186MultiProof {
                 .get_mut(&address_eh)
                 .expect("No account");
             proof.traverse_oracle_update(task, &self.node_oracle)?;
-            
+
             storage_hash = proof.root;
         }
         if task_count != 0 {
@@ -257,8 +265,8 @@ impl EIP1186MultiProof {
 }
 
 /// Get the RLP-encoded form of a storage value.
-pub fn slot_rlp_from_value(slot_value: U256) -> Vec<u8> {
-    let trimmed = slot_value.to_be_bytes_trimmed_vec();
+pub fn slot_rlp_from_value(storage_value: U256) -> Vec<u8> {
+    let trimmed = storage_value.to_be_bytes_trimmed_vec();
     rlp::encode(&trimmed).to_vec()
 }
 
