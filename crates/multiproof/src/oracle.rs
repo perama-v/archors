@@ -61,7 +61,8 @@ impl Display for OracleTask {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "oracle task for key {} at traversal index {}",
+            "oracle task for address {}, storage key {} and traversal index {}",
+            hex_encode(self.address),
             hex_encode(self.key),
             self.traversal_index
         )
@@ -70,11 +71,11 @@ impl Display for OracleTask {
 
 impl OracleTask {
     /// Generate a new task.
-    pub fn new(address: H160, key: H256, node: &VisitedNode) -> Self {
+    pub fn new(address: H160, key: H256, traversal_index: usize) -> Self {
         OracleTask {
             address,
             key,
-            traversal_index: node.traversal_record.visiting_index(),
+            traversal_index,
         }
     }
     /// Gets the node from the oracle, performs checks and returns the node hash.

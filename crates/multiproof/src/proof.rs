@@ -1,12 +1,9 @@
 //! For verifying a Merkle Patricia Multi Proof for arbitrary proof values.
 //! E.g., Account, storage ...
 
-use std::{collections::HashMap, fmt::Display};
+use std::collections::HashMap;
 
-use archors_types::{
-    oracle::{OracleTarget, TrieNodeOracle},
-    proof::DisplayProof,
-};
+use archors_types::{oracle::TrieNodeOracle, proof::DisplayProof};
 use archors_verify::{
     eip1186::Account,
     path::{
@@ -54,6 +51,8 @@ pub enum ProofError {
     NoProofNodeForHash(String),
     #[error("Unable to retrieve view node using node hash {0}")]
     NoViewNodeForHash(String),
+    #[error("Traversal has no history")]
+    NoTraversalHistory,
     #[error("PathError {0}")]
     PathError(#[from] PathError),
     #[error("Leaf node has no final path to traverse")]
@@ -76,10 +75,8 @@ pub enum ProofError {
     ModifyError(#[from] ModifyError),
     #[error("NodeError {0}")]
     NodeError(#[from] NodeError),
-    #[error(
-        "NoNodeInOracle: The oracle was expected to have a node for address {address} key {key}"
-    )]
-    NoNodeInOracle { address: String, key: String },
+    #[error("NoNodeInOracle: The oracle was expected to have a node for task {task} ")]
+    NoNodeInOracle { task: String },
 }
 
 #[derive(Debug, Error)]
@@ -123,13 +120,13 @@ pub struct MultiProof {
     /// Root hash of the proof. Used as the entry point to follow a path in the trie.
     /// Updated when data is modified.
     pub root: H256,
-    /// Node updates that need an oracle to be completed.
-    pub oracle_task: Option<OracleTask>,
+    /// Traversal index that requires information from an oracle in order to update the proof.
+    pub traversal_index_for_oracle_task: Option<usize>,
 }
 
 pub enum ProofOutcome {
     Root(H256),
-    Task(OracleTask),
+    IndexForOracle(usize),
 }
 
 impl MultiProof {
@@ -138,7 +135,7 @@ impl MultiProof {
         MultiProof {
             data: HashMap::default(),
             root,
-            oracle_task: None,
+            traversal_index_for_oracle_task: None,
         }
     }
     /// Add a new single proof to the multiproof.
@@ -166,15 +163,7 @@ impl MultiProof {
     ///
     /// May either be to update the value or to verify. A task may be returned if information
     /// form an oracle is required.
-    ///
-    /// The path preimage is passed so that when a node oracle is required, the oracle task
-    /// can be made. This applies to storage proofs only, which can be removed from the trie.
-    pub fn traverse(
-        &mut self,
-        path: H256,
-        oracle_target: Option<OracleTarget>,
-        intent: &Intent,
-    ) -> Result<(), ProofError> {
+    pub fn traverse(&mut self, path: H256, intent: &Intent) -> Result<(), ProofError> {
         let mut traversal = NibblePath::init(path.as_bytes());
         let mut next_node_hash = self.root;
         let mut visited_nodes: Vec<VisitedNode> = vec![];
@@ -202,7 +191,6 @@ impl MultiProof {
                     match (is_exclusion_proof, intent) {
                         (true, Intent::Modify(new_rlp_value)) => {
                             self.apply_changes(
-                                None,
                                 Change::BranchExclusionToInclusion(new_rlp_value.clone()),
                                 &visited_nodes,
                             )?;
@@ -241,7 +229,6 @@ impl MultiProof {
                         }
                         (SubPathDiverges(divergent_nibble_index), Intent::Modify(new_value)) => {
                             self.apply_changes(
-                                None,
                                 Change::ExtensionExclusionToInclusion {
                                     new_value: new_value.clone(),
                                     divergent_nibble_index,
@@ -280,7 +267,6 @@ impl MultiProof {
                         }
                         (FullPathMatches, Intent::Modify(new_value)) => {
                             self.apply_changes(
-                                None,
                                 Change::LeafInclusionModify(new_value.clone()),
                                 &visited_nodes,
                             )?;
@@ -290,11 +276,7 @@ impl MultiProof {
                             return Err(ProofError::ExclusionRequired)
                         }
                         (FullPathMatches, Intent::Remove) => {
-                            self.apply_changes(
-                                oracle_target,
-                                Change::LeafInclusionToExclusion,
-                                &visited_nodes,
-                            )?;
+                            self.apply_changes(Change::LeafInclusionToExclusion, &visited_nodes)?;
                             return Ok(());
                         }
                         (FullPathMatches, Intent::VerifyInclusion(expected_rlp_data)) => {
@@ -310,7 +292,6 @@ impl MultiProof {
                             Intent::Modify(new_rlp_value),
                         ) => {
                             self.apply_changes(
-                                None,
                                 Change::LeafExclusionToInclusion {
                                     new_value: new_rlp_value.clone(),
                                     divergent_nibble_index,
@@ -414,13 +395,16 @@ impl MultiProof {
                 break;
             }
         }
-        // Traverse the oracle. Start near root, follow path toward leaves.
-        let oracle_node = oracle.lookup_node(task.address, task.key).ok_or_else(|| {
-            ProofError::NoNodeInOracle {
-                address: hex_encode(task.address),
-                key: hex_encode(task.key),
-            }
-        })?;
+        // Consult the oracle.
+        let traversal_for_oracle = traversal
+            .history_with_next()
+            .map_err(|_| ProofError::NoTraversalHistory)?;
+
+        let oracle_node = oracle
+            .lookup_node(task.address, traversal_for_oracle.to_owned())
+            .ok_or_else(|| ProofError::NoNodeInOracle {
+                task: task.to_string(),
+            })?;
         let oracle_node_hash = keccak256(oracle_node);
 
         // The first update is to a node whose child is now the oracle-based node.
@@ -446,7 +430,6 @@ impl MultiProof {
     /// value, and associated removal or addition of nodes.
     fn apply_changes(
         &mut self,
-        oracle_target: Option<OracleTarget>,
         change: Change,
         visited: &[VisitedNode],
     ) -> Result<(), ModifyError> {
@@ -581,8 +564,7 @@ impl MultiProof {
                 //   - If branch, go to 1.
 
                 // Modify the parent (and higher ancestors if needed).
-                let (highest_hash, nodes_processed) =
-                    self.process_leaf_child_removal(oracle_target, visited)?;
+                let (highest_hash, nodes_processed) = self.process_leaf_child_removal(visited)?;
 
                 // Now just perform simple hash updates.
                 let mut updated_hash = highest_hash;
@@ -761,17 +743,11 @@ impl MultiProof {
     /// Visited refers to nodes traversed (root to leaf).
     fn process_leaf_child_removal(
         &mut self,
-        oracle_target: Option<OracleTarget>,
         visit_record: &[VisitedNode],
     ) -> Result<([u8; 32], usize), ModifyError> {
         if visit_record.len() == 1 {
             todo!("handle modification when no grandparent exists");
         }
-        let target = match oracle_target {
-            Some(t) => t,
-            None => todo!("return error: Must have passed a storage key that is being removed."),
-        };
-
         // Visit_record
         let leaf_visit_record_index = visit_record.len() - 1;
         let parent_visit_record_index = leaf_visit_record_index - 1;
@@ -797,7 +773,6 @@ impl MultiProof {
         // [next_node_0, ..., next_node_16, value]
         let mut updated = Node::default();
         let mut item_count = 0;
-        let mut non_empty_child_index = 0;
         // Find where the orphaned sibling leaf belongs in the branch.
         for (index, item) in outdated_node.into_iter().enumerate() {
             if index == parent.item_index {
@@ -806,7 +781,6 @@ impl MultiProof {
             } else {
                 if !item.is_empty() {
                     item_count += 1;
-                    non_empty_child_index = index;
                 }
                 updated.0.push(Item(item));
             }
@@ -823,15 +797,12 @@ impl MultiProof {
                     .get(grandparent_visit_record_index)
                     .ok_or(ModifyError::NoVisitedNode)?;
 
-                self.oracle_task = Some(OracleTask::new(
-                    target.address,
-                    target.key,
-                    visited_grandparent,
-                ));
+                self.traversal_index_for_oracle_task =
+                    Some(visited_grandparent.traversal_record.visiting_index());
 
                 debug!(
                     "Creating oracle task {:?}. parent nibble at {}, grandparent nibble at {}",
-                    self.oracle_task,
+                    self.traversal_index_for_oracle_task,
                     parent.traversal_record.visiting_index(),
                     visited_grandparent.traversal_record.visiting_index()
                 );

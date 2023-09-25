@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::str::FromStr;
 
 use archors_types::execution::{EvmStateError, StateForEvm};
-use archors_types::oracle::{OracleTarget, TrieNodeOracle};
+use archors_types::oracle::TrieNodeOracle;
 use archors_types::proof::{DisplayProof, DisplayStorageProof};
 use archors_types::utils::{
     eh256_to_ru256, eu256_to_ru256, eu64_to_ru256, rb160_to_eh160, ru256_to_eh256,
@@ -144,25 +144,21 @@ impl EIP1186MultiProof {
             .storage_proofs
             .get_mut(&address_eh)
             .ok_or_else(|| MultiProofError::NoAccount(hex_encode(address).to_string()))?;
-        let oracle_target = Some(OracleTarget {
-            address: address_eh,
-            key,
-        });
-        proof.traverse(path, oracle_target, &intent).map_err(|e| {
-            MultiProofError::StorageProofError {
+
+        proof
+            .traverse(path, &intent)
+            .map_err(|e| MultiProofError::StorageProofError {
                 source: e,
                 address: hex_encode(address),
                 key: hex_encode(key),
+            })?;
+        Ok(match &proof.traversal_index_for_oracle_task {
+            Some(index) => {
+                let outcome = ProofOutcome::IndexForOracle(*index);
+                // Wipe the index from the multiproof so that later storage updates have fresh value.
+                proof.traversal_index_for_oracle_task = None;
+                outcome
             }
-        })?;
-        Ok(match &proof.oracle_task {
-            Some(task) => {
-                let task_outcome = task.to_owned();
-                // Wipe the task from the multiproof.
-                proof.oracle_task = None;
-                ProofOutcome::Task(task_outcome)
-            }
-            ,
             None => ProofOutcome::Root(proof.root),
         })
     }
@@ -179,7 +175,7 @@ impl EIP1186MultiProof {
         // in the trie (with null storage/code hashes).
         let intent = Intent::Modify(account.rlp_bytes().into());
         self.account_proofs
-            .traverse(path.into(), None, &intent)
+            .traverse(path.into(), &intent)
             .map_err(|e| MultiProofError::AccountProofError {
                 source: e,
                 address: hex_encode(address),
@@ -213,26 +209,39 @@ impl EIP1186MultiProof {
         let mut storage_hash = existing_account.storage_hash;
         let mut tasks: Vec<OracleTask> = vec![];
         for (storage_key, storage_value) in account_updates.storage {
+            let key = ru256_to_eh256(storage_key);
             if storage_value.is_changed() {
-                match self.update_storage_proof(address, storage_key, storage_value.present_value)? {
+                match self.update_storage_proof(
+                    address,
+                    storage_key,
+                    storage_value.present_value,
+                )? {
                     ProofOutcome::Root(hash) => storage_hash = hash,
-                    ProofOutcome::Task(task) =>{
-                        debug!("Task received for key {}", hex_encode(&storage_key.to_be_bytes_vec()));
-                        tasks.push(task)},
+                    ProofOutcome::IndexForOracle(traversal_index) => {
+                        debug!(
+                            "Task received for key {}",
+                            hex_encode(&storage_key.to_be_bytes_vec())
+                        );
+                        let task = OracleTask {
+                            address: address_eh,
+                            key,
+                            traversal_index,
+                        };
+                        tasks.push(task)
+                    }
                 }
             }
         }
         // Start with oracle tasks with deepest traversal depth. This prevents tasks from clashing.
         tasks.sort_by_key(|x| x.traversal_index);
         let task_count = tasks.len();
-        for (index,task) in tasks.into_iter().rev().enumerate() {
+        for (index, task) in tasks.into_iter().rev().enumerate() {
             debug!("Starting {} ({} of {})", task, index + 1, task_count);
             let proof = self
                 .storage_proofs
                 .get_mut(&address_eh)
                 .expect("No account");
             proof.traverse_oracle_update(task, &self.node_oracle)?;
-
             storage_hash = proof.root;
         }
         if task_count != 0 {

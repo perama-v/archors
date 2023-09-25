@@ -174,6 +174,18 @@ impl NibblePath {
     pub fn pending(&self) -> Result<Vec<u8>, PathError> {
         Ok(self.path[self.visiting_index..].to_vec())
     }
+    /// Returns the nibbles that have been traversed.
+    ///
+    /// Each nibble is represented as a byte.
+    pub fn history(&self) -> Result<Vec<u8>, PathError> {
+        Ok(self.path[..self.visiting_index].to_vec())
+    }
+    /// Returns the nibbles that have been traversed plus the nibble to be visited next.
+    ///
+    /// Each nibble is represented as a byte.
+    pub fn history_with_next(&self) -> Result<Vec<u8>, PathError> {
+        Ok(self.path[..=self.visiting_index].to_vec())
+    }
     /// Returns the prefix-encoded path including the nibbles at start and end indices.
     ///
     /// As the path (32 bytes) nibbles are represented as u8, the final nibble is at index 63.
