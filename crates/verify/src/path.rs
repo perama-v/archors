@@ -210,6 +210,13 @@ impl NibblePath {
     pub fn nibble_at_index(&self, index: usize) -> Result<u8, PathError> {
         Ok(*self.path.get(index).ok_or(PathError::InvalidIndex)?)
     }
+    /// Returns the nibble path up to and including a specific traversal index.
+    pub fn traversal_to_index(&self, index: usize) -> Result<&[u8], PathError> {
+        if index > 63 {
+            return Err(PathError::InvalidIndex);
+        }
+        Ok(&self.path[0..(index + 1)])
+    }
 }
 
 /// Merkle proof that a key is or isn't part of the trie.
@@ -810,5 +817,17 @@ mod test {
         assert!(nibbles_to_bytes(&[0xb, 0xc, 0x3, 0xa, 0xf6, 0x1e]).is_err());
         // Odd length
         assert!(nibbles_to_bytes(&[0xb, 0xc, 0x3, 0xa, 0x1]).is_err());
+    }
+
+    #[test]
+    fn test_traversal_to_index() {
+        let traversal = NibblePath::init(
+            &hex::decode("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+                .unwrap(),
+        );
+        assert_eq!(
+            traversal.traversal_to_index(2).unwrap(),
+            vec![0x00, 0x01, 0x02]
+        );
     }
 }
