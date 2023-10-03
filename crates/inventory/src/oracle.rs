@@ -3,16 +3,32 @@
 //! The oracle provides nodes for scenarios where key deletion involves node removal and trie
 //! rearrangements that are otherwise incomputable.
 
-use std::str::FromStr;
+use std::{collections::HashMap, str::FromStr};
 
+use archors_multiproof::{
+    eip1186::MultiProofError, oracle::OracleTask, proof::ProofOutcome, EIP1186MultiProof,
+};
 use archors_types::oracle::TrieNodeOracle;
-use ethers::{
-    types::{H160, H256},
-    utils::keccak256,
+use archors_verify::path::{NibblePath, PathError};
+use ethers::{types::H160, utils::keccak256};
+use thiserror::Error;
+
+use crate::{
+    types::BlockProofs,
+    utils::{hex_decode, hex_encode},
 };
 
-use crate::{types::BlockProofs, utils::hex_decode};
-
+#[derive(Debug, Error)]
+pub enum OracleError {
+    #[error("Unable to find address in post-state proof {0}")]
+    NoPostStateAddress(String),
+    #[error("Unable to find key {key} in post-state proof for address {address}")]
+    NoPostStateKey { address: String, key: String },
+    #[error("Multiproof Error {0}")]
+    MultiProofError(#[from] MultiProofError),
+    #[error("Path Error {0}")]
+    PathError(#[from] PathError),
+}
 // traversal index 1
 // path a94cbb29e9e040ea0451a17e489cd2b1b66a862b497352538b80d4240421919d
 const DEMO_ACCOUNT: &str = "0x0a6dd5d5a00d6cb0678a4af507ba79a517d5eb64";
@@ -51,7 +67,7 @@ const DEMO_NODES_4: [&str; 2] = [
 
 /// Looks for situations where storage keys are removed by a block. Returns internal nodes
 /// critical for trie updates in those scenarios.
-pub fn detect_removed_storage(_pre: BlockProofs, _post: BlockProofs) -> TrieNodeOracle {
+pub fn demo_detect_removed_storage(_pre: BlockProofs, _post: BlockProofs) -> TrieNodeOracle {
     // Look for storage keys that have value = 0x0 post-state.
     // let at_risk_keys = todo!(); // in post
 
@@ -95,4 +111,66 @@ pub fn detect_removed_storage(_pre: BlockProofs, _post: BlockProofs) -> TrieNode
     oracle.insert(address, vec![0xb, 0x6, 0xa, 0x0], nodes);
 
     oracle
+}
+
+/// Tries to apply known state transition to a multiproof. The oracle is then constructed from
+/// the known values.
+pub fn detect_removed_storage(
+    pre: BlockProofs,
+    post: BlockProofs,
+) -> Result<TrieNodeOracle, OracleError> {
+    // set up multiproof for pre-block state.
+    let mut multiproof_pre = EIP1186MultiProof::from_separate(
+        pre.proofs.into_values().collect(),
+        HashMap::new(),
+        HashMap::new(),
+        TrieNodeOracle::default(),
+    )?;
+
+    // Detect places where an oracle is required.
+    let mut tasks: Vec<OracleTask> = vec![];
+    for (address, account) in post.proofs.iter() {
+        for storage_proof_post in &account.storage_proof {
+            if !storage_proof_post.value.is_zero() {
+                continue;
+            }
+            let key = storage_proof_post.key;
+            match multiproof_pre.update_storage_proof(&address, key, storage_proof_post.value)? {
+                ProofOutcome::Root(_) => {
+                    // Storage update did not require oracle - ignore.
+                    continue;
+                }
+                ProofOutcome::IndexForOracle(traversal_index) => tasks.push(OracleTask {
+                    address: address.clone(),
+                    key,
+                    traversal_index,
+                }),
+            }
+        }
+    }
+
+    let mut oracle = TrieNodeOracle::default();
+    // Populate the oracle
+    for task in &tasks {
+        let account = post
+            .proofs
+            .get(&task.address)
+            .ok_or(OracleError::NoPostStateAddress(hex_encode(task.address)))?;
+        let storage = account
+            .storage_proof
+            .iter()
+            .find(|x| x.key == task.key)
+            .ok_or(OracleError::NoPostStateKey {
+                address: hex_encode(task.address),
+                key: hex_encode(task.key),
+            })?;
+
+        let proof_bytes = storage.proof.iter().map(|x| x.to_vec()).collect();
+
+        let path_nibbles = NibblePath::init(&keccak256(task.key));
+        let nibbles_to_target = path_nibbles.traversal_to_index(task.traversal_index)?;
+
+        oracle.insert(task.address, nibbles_to_target.to_vec(), proof_bytes)
+    }
+    Ok(oracle)
 }

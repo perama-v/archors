@@ -16,12 +16,13 @@ use ethers::{
     utils::keccak256,
 };
 use futures::stream::StreamExt;
-use log::info;
+use log::{info, debug};
 use reqwest::Client;
 use thiserror::Error;
 use url::{ParseError, Url};
 
 use crate::{
+    oracle::{detect_removed_storage, OracleError},
     rpc::{
         debug_trace_block_default, debug_trace_block_prestate, eth_get_proof, get_block_by_number,
         AccountProofResponse, BlockDefaultTraceResponse, BlockPrestateResponse,
@@ -29,7 +30,7 @@ use crate::{
     },
     transferrable::{state_from_parts, TransferrableError},
     types::{BlockHashAccess, BlockHashAccesses, BlockProofs, BlockStateAccesses},
-    utils::{compress, decompress, hex_decode, string_to_h256, UtilsError}, oracle::detect_removed_storage,
+    utils::{compress, decompress, hex_decode, string_to_h256, UtilsError},
 };
 
 static CACHE_DIR: &str = "data/blocks";
@@ -43,6 +44,8 @@ pub enum CacheError {
     },
     #[error("Block retrieved does not yet have a number")]
     NoBlockNumber,
+    #[error("Node oracle error {0}")]
+    OracleError(#[from] OracleError),
     #[error("Reqwest error {0}")]
     ReqwestError(#[from] reqwest::Error),
     #[error("IO error {0}")]
@@ -438,10 +441,11 @@ fn save_transferrable_data(target_block: u64, data: RequiredBlockState) -> Resul
 pub fn get_node_oracle_from_cache(block: u64) -> Result<TrieNodeOracle, CacheError> {
     let post = get_post_state_proofs_from_cache(block)?;
     let pre = get_proofs_from_cache(block)?;
-    let oracle = detect_removed_storage(pre, post);
+    //let oracle = demo_detect_removed_storage(pre, post);
+    let oracle = detect_removed_storage(pre, post)?;
+    debug!("oracle has been constructed");
     Ok(oracle)
 }
-
 
 /// Retrieves the accessed-state proofs for a single block from cache.
 pub fn get_proofs_from_cache(block: u64) -> Result<BlockProofs, CacheError> {

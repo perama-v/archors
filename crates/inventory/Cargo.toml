@@ -5,7 +5,9 @@ edition = "2021"
 description = "A tool for discovering which state was accessed for an Ethereum block"
 
 [dependencies]
+archors_multiproof= {path = "../multiproof"}
 archors_types = {path = "../types"}
+archors_verify = { path = "../verify" }
 ethers = "2.0.4"
 futures = "0.3.28"
 hex = "0.4.3"

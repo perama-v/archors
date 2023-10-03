@@ -1,4 +1,4 @@
-use std::{collections::HashMap, ops::Deref};
+use std::collections::HashMap;
 
 use ethers::types::H160;
 
@@ -47,7 +47,7 @@ impl TrieNodeOracle {
 #[derive(Debug, Default, Clone, Eq, PartialEq, Hash)]
 struct OracleTarget {
     address: H160,
-    /// Traversal to the target node.
+    /// Traversal to the target node, as nibbles.
     ///
     /// E.g., If the path is 0xa4fcb... and the node at traversal index 2, then the traversal
     /// is [0xa, 0x4, 0xf].
