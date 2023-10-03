@@ -163,11 +163,21 @@ impl MultiProof {
         }
         Ok(())
     }
+    /// Get the node for the given node hash.
+    pub fn get_node(&self, hash: &H256) -> Result<&[u8], ProofError> {
+        Ok(self.data
+            .get(hash)
+            .ok_or_else(|| ProofError::NoProofNodeForHash(hex_encode(hash)))?)
+    }
     /// Traverse a path in the multiproof.
     ///
     /// May either be to update the value or to verify. A task may be returned if information
     /// form an oracle is required.
-    pub fn traverse(&mut self, path: H256, intent: &Intent) -> Result<(), ProofError> {
+    pub fn traverse(
+        &mut self,
+        path: H256,
+        intent: &Intent,
+    ) -> Result<Vec<VisitedNode>, ProofError> {
         let mut traversal = NibblePath::init(path.as_bytes());
         let mut next_node_hash = self.root;
         let mut visited_nodes: Vec<VisitedNode> = vec![];
@@ -198,13 +208,13 @@ impl MultiProof {
                                 Change::BranchExclusionToInclusion(new_rlp_value.clone()),
                                 &visited_nodes,
                             )?;
-                            return Ok(());
+                            return Ok(visited_nodes);
                         }
                         (true, Intent::Remove) => {
                             // Key already not in trie.
-                            return Ok(());
+                            return Ok(visited_nodes);
                         }
-                        (true, Intent::VerifyExclusion) => return Ok(()),
+                        (true, Intent::VerifyExclusion) => return Ok(visited_nodes),
                         (true, Intent::VerifyInclusion(_)) => {
                             return Err(ProofError::InclusionRequired)
                         }
@@ -239,13 +249,13 @@ impl MultiProof {
                                 },
                                 &visited_nodes,
                             )?;
-                            return Ok(());
+                            return Ok(visited_nodes);
                         }
                         (SubPathDiverges(_), Intent::Remove) => {
                             // Key already not in trie
-                            return Ok(());
+                            return Ok(visited_nodes);
                         }
-                        (SubPathDiverges(_), Intent::VerifyExclusion) => return Ok(()),
+                        (SubPathDiverges(_), Intent::VerifyExclusion) => return Ok(visited_nodes),
                         (SubPathDiverges(_), Intent::VerifyInclusion(_)) => {
                             return Err(ProofError::InclusionRequired)
                         }
@@ -274,14 +284,14 @@ impl MultiProof {
                                 Change::LeafInclusionModify(new_value.clone()),
                                 &visited_nodes,
                             )?;
-                            return Ok(());
+                            return Ok(visited_nodes);
                         }
                         (FullPathMatches, Intent::VerifyExclusion) => {
                             return Err(ProofError::ExclusionRequired)
                         }
                         (FullPathMatches, Intent::Remove) => {
                             self.apply_changes(Change::LeafInclusionToExclusion, &visited_nodes)?;
-                            return Ok(());
+                            return Ok(visited_nodes);
                         }
                         (FullPathMatches, Intent::VerifyInclusion(expected_rlp_data)) => {
                             let leaf_rlp_data =
@@ -289,7 +299,7 @@ impl MultiProof {
                             if leaf_rlp_data != expected_rlp_data {
                                 return Err(ProofError::IncorrectLeafData);
                             }
-                            return Ok(());
+                            return Ok(visited_nodes);
                         }
                         (
                             FullPathDiverges(divergent_nibble_index),
@@ -302,13 +312,13 @@ impl MultiProof {
                                 },
                                 &visited_nodes,
                             )?;
-                            return Ok(());
+                            return Ok(visited_nodes);
                         }
                         (FullPathDiverges(_), Intent::Remove) => {
                             // Key already not in trie
-                            return Ok(());
+                            return Ok(visited_nodes);
                         }
-                        (FullPathDiverges(_), Intent::VerifyExclusion) => return Ok(()),
+                        (FullPathDiverges(_), Intent::VerifyExclusion) => return Ok(visited_nodes),
                         (FullPathDiverges(_), Intent::VerifyInclusion(_)) => {
                             return Err(ProofError::InclusionRequired)
                         }

@@ -13,7 +13,12 @@ pub struct TrieNodeOracle(HashMap<OracleTarget, Vec<Vec<u8>>>);
 
 impl TrieNodeOracle {
     /// Make an addition to the oracle.
-    pub fn insert(&mut self, address: H160, traversal_to_target: Vec<u8>, nodes: Vec<Vec<u8>>) {
+    pub fn insert_nodes(
+        &mut self,
+        address: H160,
+        traversal_to_target: Vec<u8>,
+        nodes: Vec<Vec<u8>>,
+    ) {
         self.0.insert(
             OracleTarget {
                 address,

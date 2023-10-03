@@ -6,7 +6,10 @@
 use std::{collections::HashMap, str::FromStr};
 
 use archors_multiproof::{
-    eip1186::MultiProofError, oracle::OracleTask, proof::ProofOutcome, EIP1186MultiProof,
+    eip1186::MultiProofError,
+    oracle::OracleTask,
+    proof::{Intent, MultiProof, ProofError, ProofOutcome},
+    EIP1186MultiProof,
 };
 use archors_types::oracle::TrieNodeOracle;
 use archors_verify::path::{NibblePath, PathError};
@@ -28,6 +31,8 @@ pub enum OracleError {
     MultiProofError(#[from] MultiProofError),
     #[error("Path Error {0}")]
     PathError(#[from] PathError),
+    #[error("Proof Error {0}")]
+    ProofError(#[from] ProofError),
 }
 // traversal index 1
 // path a94cbb29e9e040ea0451a17e489cd2b1b66a862b497352538b80d4240421919d
@@ -86,7 +91,7 @@ pub fn demo_detect_removed_storage(_pre: BlockProofs, _post: BlockProofs) -> Tri
         .into_iter()
         .map(|node_string| hex_decode(node_string).unwrap())
         .collect();
-    oracle.insert(address, vec![0xa, 0x9], nodes);
+    oracle.insert_nodes(address, vec![0xa, 0x9], nodes);
 
     let address = H160::from_str(DEMO_ACCOUNT_2).unwrap();
 
@@ -94,21 +99,21 @@ pub fn demo_detect_removed_storage(_pre: BlockProofs, _post: BlockProofs) -> Tri
         .into_iter()
         .map(|node_string| hex_decode(node_string).unwrap())
         .collect();
-    oracle.insert(address, vec![0x8, 0x6, 0x6, 0x5], nodes);
+    oracle.insert_nodes(address, vec![0x8, 0x6, 0x6, 0x5], nodes);
 
     let address = H160::from_str(DEMO_ACCOUNT_3).unwrap();
     let nodes = DEMO_NODES_3
         .into_iter()
         .map(|node_string| hex_decode(node_string).unwrap())
         .collect();
-    oracle.insert(address, vec![0x5, 0x7], nodes);
+    oracle.insert_nodes(address, vec![0x5, 0x7], nodes);
 
     let address = H160::from_str(DEMO_ACCOUNT_4).unwrap();
     let nodes = DEMO_NODES_4
         .into_iter()
         .map(|node_string| hex_decode(node_string).unwrap())
         .collect();
-    oracle.insert(address, vec![0xb, 0x6, 0xa, 0x0], nodes);
+    oracle.insert_nodes(address, vec![0xb, 0x6, 0xa, 0x0], nodes);
 
     oracle
 }
@@ -164,13 +169,30 @@ pub fn detect_removed_storage(
                 address: hex_encode(task.address),
                 key: hex_encode(task.key),
             })?;
+        // Create a representation of the proof that is easy to traverse.
+        let mut proof = MultiProof::init(account.storage_hash);
+        proof
+            .insert_proof(storage.proof.to_owned())
+            .expect("Cachecd proof from RPC expected to be valid.");
+        let path = keccak256(task.key);
+        let visited = proof
+            .traverse(path.into(), &Intent::VerifyExclusion)
+            .expect("All tasks should be for exclusion proofs (in post-block state)");
 
-        let proof_bytes = storage.proof.iter().map(|x| x.to_vec()).collect();
+        // Skip the first part of the proof. Only include the required nodes.
+        let mut proof_subset: Vec<Vec<u8>> = vec![];
+        for node in visited {
+            if node.traversal_record.visiting_index() >= task.traversal_index {
 
-        let path_nibbles = NibblePath::init(&keccak256(task.key));
+                let node_bytes = proof.get_node(&node.node_hash)?;
+                println!("Adding node to oracle:\n\n{}", hex_encode(node_bytes));
+                proof_subset.push(node_bytes.to_vec())
+            }
+        }
+
+        let path_nibbles = NibblePath::init(&path);
         let nibbles_to_target = path_nibbles.traversal_to_index(task.traversal_index)?;
-
-        oracle.insert(task.address, nibbles_to_target.to_vec(), proof_bytes)
+        oracle.insert_nodes(task.address, nibbles_to_target.to_vec(), proof_subset)
     }
     Ok(oracle)
 }
