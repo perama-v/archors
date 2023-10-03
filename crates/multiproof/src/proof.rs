@@ -57,7 +57,7 @@ pub enum ProofError {
     NoTraversalHistory,
     #[error("PathError {0}")]
     PathError(#[from] PathError),
-    #[error("Unable to traverse and confirm key exclusion proof after oracle update {0}")]
+    #[error("Unable to traverse and confirm key exclusion proof after oracle update: {0}")]
     PostOracleTraversalFailed(String),
     #[error("Leaf node has no final path to traverse")]
     LeafHasNoFinalPath,

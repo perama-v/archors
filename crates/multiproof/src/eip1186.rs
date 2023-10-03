@@ -52,6 +52,7 @@ pub enum MultiProofError {
 /// Accounts all go in one trie. Storage goes in one trie per account.
 ///
 /// Includes state data that is necessary and sufficient to execute a block.
+#[derive(Debug, Default)]
 pub struct EIP1186MultiProof {
     /// Accounts
     pub accounts: HashMap<H160, AccountData>,
@@ -126,23 +127,23 @@ impl EIP1186MultiProof {
     ///
     /// Returns the updated storage hash for the account, or if an update requires an
     /// oracle lookup, the oracle task is teturned.
-    fn update_storage_proof(
+    pub fn update_storage_proof(
         &mut self,
-        address: &B160,
-        storage_key: U256,
-        storage_value: U256,
+        address: &H160,
+        storage_key: H256,
+        storage_value: eU256,
     ) -> Result<ProofOutcome, MultiProofError> {
-        let key = ru256_to_eh256(storage_key);
-        let path = H256::from(keccak256(&key));
-        debug!("Storage proof update started for key {}", hex_encode(key));
-        let intent = match storage_value == U256::default() {
+        //let key = ru256_to_eh256(storage_key);
+        let path = H256::from(keccak256(&storage_key));
+        debug!("Storage proof update started for key {}", hex_encode(storage_key));
+        let intent = match storage_value == eU256::default() {
             true => Intent::Remove,
-            false => Intent::Modify(slot_rlp_from_value(storage_value)),
+            false => Intent::Modify(slot_rlp_from_value(storage_value.into())),
         };
-        let address_eh = rb160_to_eh160(address);
+
         let proof = self
             .storage_proofs
-            .get_mut(&address_eh)
+            .get_mut(&address)
             .ok_or_else(|| MultiProofError::NoAccount(hex_encode(address).to_string()))?;
 
         proof
@@ -150,7 +151,7 @@ impl EIP1186MultiProof {
             .map_err(|e| MultiProofError::StorageProofError {
                 source: e,
                 address: hex_encode(address),
-                key: hex_encode(key),
+                key: hex_encode(storage_key),
             })?;
         Ok(match &proof.traversal_index_for_oracle_task {
             Some(index) => {
@@ -212,9 +213,9 @@ impl EIP1186MultiProof {
             let key = ru256_to_eh256(storage_key);
             if storage_value.is_changed() {
                 match self.update_storage_proof(
-                    address,
-                    storage_key,
-                    storage_value.present_value,
+                    &address_eh,
+                    key,
+                    storage_value.present_value.into(),
                 )? {
                     ProofOutcome::Root(hash) => storage_hash = hash,
                     ProofOutcome::IndexForOracle(traversal_index) => {
@@ -291,6 +292,7 @@ pub struct AccountData {
     pub code_hash: H256,
 }
 
+#[derive(Debug, Default)]
 pub struct StorageData {
     pub key: H256,
     pub value: eU256,

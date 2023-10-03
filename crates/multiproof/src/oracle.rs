@@ -31,13 +31,13 @@
 //! equivalent node.
 //! 6. If they are the same, the new item is accepted and the changes updated to the storage root.
 
-use std::{collections::HashMap, fmt::Display};
+use std::fmt::Display;
 
 use archors_types::oracle::TrieNodeOracle;
 use ethers::types::{H160, H256};
 use serde::{Deserialize, Serialize};
 
-use crate::{node::VisitedNode, proof::Node, utils::hex_encode};
+use crate::{proof::Node, utils::hex_encode};
 
 /// A node that has been flagged as requiring an oracle to be updated.
 ///
