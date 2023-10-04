@@ -133,9 +133,11 @@ impl EIP1186MultiProof {
         storage_key: H256,
         storage_value: eU256,
     ) -> Result<ProofOutcome, MultiProofError> {
-        //let key = ru256_to_eh256(storage_key);
         let path = H256::from(keccak256(&storage_key));
-        debug!("Storage proof update started for key {}", hex_encode(storage_key));
+        debug!(
+            "Storage proof update started for key {}",
+            hex_encode(storage_key)
+        );
         let intent = match storage_value == eU256::default() {
             true => Intent::Remove,
             false => Intent::Modify(slot_rlp_from_value(storage_value.into())),

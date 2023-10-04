@@ -15,7 +15,7 @@ use ethers::{
     types::{Bytes, H256, U256},
     utils::keccak256,
 };
-use log::{debug, warn};
+use log::{debug};
 use rlp::{Encodable, RlpStream};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -340,6 +340,7 @@ impl MultiProof {
     /// - In the parent of the node being updated, update the hash to the oracle-based hash
     /// (self.update_node_with_child_hash)
     /// - Cascade remaining changes to the root
+    /// - Then traverse the entire path and confirm that it is a valid exclusion proof.
     ///
     /// During future traversals, this oracle-based node would then be traversed. However, this
     /// will not arise because the oracle updates are applied deepest-first.
@@ -446,8 +447,6 @@ impl MultiProof {
         // The traversal should now have enough information now that the oracle update is complete.
         self.traverse(path, &Intent::VerifyExclusion)
             .map_err(|e| ProofError::PostOracleTraversalFailed(e.to_string()))?;
-        warn!("Did not confirm that the oracle data was an exclusion proof.");
-
         Ok(())
     }
 

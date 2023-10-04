@@ -183,9 +183,7 @@ pub fn detect_removed_storage(
         let mut proof_subset: Vec<Vec<u8>> = vec![];
         for node in visited {
             if node.traversal_record.visiting_index() >= task.traversal_index {
-
                 let node_bytes = proof.get_node(&node.node_hash)?;
-                println!("Adding node to oracle:\n\n{}", hex_encode(node_bytes));
                 proof_subset.push(node_bytes.to_vec())
             }
         }

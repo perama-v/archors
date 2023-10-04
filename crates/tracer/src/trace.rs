@@ -7,7 +7,7 @@ use archors_types::{
     utils::hex_encode,
 };
 use ethers::types::{Block, Transaction, H256};
-use log::info;
+use log::{debug, info, warn};
 use revm::primitives::{Account, HashMap as rHashMap, B160, B256, U256};
 use thiserror::Error;
 
@@ -70,6 +70,7 @@ impl<T: StateForEvm> BlockExecutor<T> {
         let mut cache_db = build_state_from_proofs(&block_proofs)?;
         cache_db.block_hashes = block_proofs.get_blockhash_accesses()?;
         let mut block_evm = BlockEvm::init_from_db(cache_db);
+        warn!("Did not set spec_id for hard fork");
         block_evm
             .add_chain_id(U256::from(1))
             .add_spec_id(&block)? // TODO
@@ -88,45 +89,40 @@ impl<T: StateForEvm> BlockExecutor<T> {
     pub fn trace_transaction(mut self, target_tx_index: usize) -> Result<T, TraceError> {
         let mut post_block_state_delta = PostBlockStateDelta::default();
 
-        for tx in self.block.transactions.into_iter() {
+        for (check_idx, tx) in self.block.transactions.into_iter().enumerate() {
             let index = tx
                 .transaction_index
                 .ok_or(TraceError::TxWithoutIndex)?
                 .as_u64() as usize;
+            assert_eq!(check_idx, index);
+            let primed = self
+                .block_evm
+                .add_transaction_environment(tx)
+                .map_err(|source| TraceError::TxEnvError { source, index })?;
+
             let post_tx = match index {
                 i if i == target_tx_index => {
                     // Execute with tracing.
-                    self.block_evm
-                        .add_transaction_environment(tx)
-                        .map_err(|source| TraceError::TxEnvError { source, index })?
+                    primed
                         .execute_with_inspector_eip3155()
                         .map_err(|source| TraceError::TxExecutionError { source, index })?
                 }
                 _ => {
                     // Execute without tracing.
-                    self.block_evm
-                        .add_transaction_environment(tx)
-                        .map_err(|source| TraceError::TxEnvError { source, index })?
+                    primed
                         .execute_without_inspector()
                         .map_err(|source| TraceError::TxExecutionError { source, index })?
                 }
             };
             post_block_state_delta.append_tx_changes(post_tx.state)?;
         }
-        match self.root_check {
-            PostExecutionProof::Update => {
-                let expected_root = self.block.state_root;
-                let computed_root = self
-                    .block_proof_cache
-                    .state_root_post_block(post_block_state_delta.get_changes())?;
-                post_root_ok(&expected_root, &computed_root)?;
-            }
-            PostExecutionProof::UpdateAndIgnore => {
-                self.block_proof_cache
-                    .state_root_post_block(post_block_state_delta.get_changes())?;
-            }
-            PostExecutionProof::Ignore => {}
-        }
+
+        post_execution_check(
+            self.root_check,
+            self.block.state_root,
+            &mut self.block_proof_cache,
+            post_block_state_delta,
+        )?;
         Ok(self.block_proof_cache)
     }
     /// Traces every transaction in the block.
@@ -139,8 +135,14 @@ impl<T: StateForEvm> BlockExecutor<T> {
     }
     /// Executes a block. The execution trace can be toggled off.
     fn trace_block_internal(mut self, silent: bool) -> Result<T, TraceError> {
+        info!("Executing block using pre-state and transactions");
         let mut post_block_state_delta = PostBlockStateDelta::default();
-        for (index, tx) in self.block.transactions.into_iter().enumerate() {
+        for (check_idx, tx) in self.block.transactions.into_iter().enumerate() {
+            let index = tx
+                .transaction_index
+                .ok_or(TraceError::TxWithoutIndex)?
+                .as_u64() as usize;
+            assert_eq!(check_idx, index);
             let primed = self
                 .block_evm
                 .add_transaction_environment(tx)
@@ -159,23 +161,43 @@ impl<T: StateForEvm> BlockExecutor<T> {
             // Update a proof object with state that changed after a transaction was executed.
             post_block_state_delta.append_tx_changes(post_tx.state)?;
         }
-        info!("block re-execution complete");
-        match self.root_check {
-            PostExecutionProof::Update => {
-                let expected_root = self.block.state_root;
-                let computed_root = self
-                    .block_proof_cache
-                    .state_root_post_block(post_block_state_delta.get_changes())?;
-                post_root_ok(&expected_root, &computed_root)?;
-            }
-            PostExecutionProof::UpdateAndIgnore => {
-                self.block_proof_cache
-                    .state_root_post_block(post_block_state_delta.get_changes())?;
-            }
-            PostExecutionProof::Ignore => {}
-        }
+
+        post_execution_check(
+            self.root_check,
+            self.block.state_root,
+            &mut self.block_proof_cache,
+            post_block_state_delta,
+        )?;
         Ok(self.block_proof_cache)
     }
+}
+
+/// If required, updates the state multiproof with the changes acquired from block execution, then
+/// checks that the post-block state root matches the root in the header.
+fn post_execution_check<T: StateForEvm>(
+    root_check: PostExecutionProof,
+    expected_root: H256,
+    block_proof_cache: &mut T,
+    post_block_state_delta: PostBlockStateDelta,
+) -> Result<(), TraceError> {
+    match root_check {
+        PostExecutionProof::Update => {
+            info!("Started post-execution state proof update");
+            let computed_root =
+                block_proof_cache.state_root_post_block(post_block_state_delta.get_changes())?;
+            post_root_ok(&expected_root, &computed_root)?;
+        }
+        PostExecutionProof::UpdateAndIgnore => {
+            info!("Started post-execution state proof update");
+            block_proof_cache.state_root_post_block(post_block_state_delta.get_changes())?;
+
+            warn!("Skipped post-execution state root verification");
+        }
+        PostExecutionProof::Ignore => {
+            warn!("Skipped post-execution state proof update and verification");
+        }
+    }
+    Ok(())
 }
 
 /// Checks that the post-block state root matches the state root in the block header.
@@ -187,7 +209,7 @@ fn post_root_ok(&header_root: &H256, computed_root: &B256) -> Result<(), TraceEr
             header_root: hex_encode(header_root),
         });
     }
-    info!("Post-execution state roof verified.");
+    info!("Post-execution state root verified.");
     Ok(())
 }
 

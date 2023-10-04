@@ -3,7 +3,7 @@ use std::str::FromStr;
 use archors_inventory::{
     cache::{
         get_block_from_cache, get_blockhashes_from_cache, get_contracts_from_cache,
-        get_post_state_proofs_from_cache, get_proofs_from_cache, get_node_oracle_from_cache,
+        get_node_oracle_from_cache, get_post_state_proofs_from_cache, get_proofs_from_cache,
     },
     utils::hex_encode,
 };
@@ -94,9 +94,11 @@ fn test_individual_account_updates_from_block_17190873() {
         EIP1186MultiProof::from_separate(proofs, code, block_hashes, node_oracle).unwrap();
 
     // Check storage root for accounts after block execution (rooted in block 17190873).
+    // If the root is incorrect, run UpdateAndIgnore, then identify the error in next section.
     let executor = BlockExecutor::load(block, state, PostExecutionProof::UpdateAndIgnore).unwrap();
     let computed_proofs = executor.trace_block_silent().unwrap();
 
+    // Interrogate each account vs known value in cached post-block RPC-based proofs.
     let mut expected_proofs: Vec<EIP1186ProofResponse> =
         get_post_state_proofs_from_cache(block_number)
             .unwrap()
@@ -109,12 +111,12 @@ fn test_individual_account_updates_from_block_17190873() {
     for (index, expected) in expected_proofs.into_iter().enumerate() {
         let address = expected.address;
         let computed_storage = computed_proofs.storage_proofs.get(&address).unwrap();
-        println!("Finished account {} of {}", index, account_sum);
+
         if expected.storage_hash != computed_storage.root {
             for storage in expected.storage_proof {
                 let expected_proof =
                     DisplayProof::init(storage.proof.into_iter().map(|p| p.to_vec()).collect());
-                println!("\n\nkey={}", hex_encode(storage.key),);
+                println!("\n\nkey = {}", hex_encode(storage.key),);
                 let key_string: String = hex_encode(storage.key.as_bytes());
                 let address_string: String = hex_encode(address.as_bytes());
                 let computed_proof = computed_proofs
@@ -126,7 +128,7 @@ fn test_individual_account_updates_from_block_17190873() {
                         "Expected: {}\nGot: {}",
                         expected_proof, computed_proof.storage
                     );
-                    panic!()
+                    panic!();
                 }
             }
 
@@ -143,7 +145,7 @@ fn test_individual_account_updates_from_block_17190873() {
                 hex_encode(address),
             );
         }
-
+        println!("Finished account {} of {}", index + 1, account_sum);
     }
 }
 

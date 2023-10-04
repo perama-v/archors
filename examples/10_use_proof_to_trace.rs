@@ -18,6 +18,7 @@ use archors_tracer::{
 /// Either trace the full block or a single transaction of interest.
 /// Notable transactions for block: 17190873
 /// - 2,
+/// - 8: storage update via access list + CALLDATALOAD (account 0x0b09dea16768f0799065c475be02919503cb2a35, key 0x495035048c903d5331ae820b52f7c4dc5ce81ee403640178e77c00a916ba54ab)
 /// - 14: Failed swap
 /// - 28: Failed contract execution
 /// - 37: Failed contract execution
@@ -52,7 +53,7 @@ fn main() -> Result<()> {
             let node_oracle = get_node_oracle_from_cache(block_number)?;
 
             let state = EIP1186MultiProof::from_separate(proofs, code, block_hashes, node_oracle)?;
-            let executor = BlockExecutor::load(block, state, PostExecutionProof::Update)?;
+            let executor = BlockExecutor::load(block, state, PostExecutionProof::UpdateAndIgnore)?;
             re_execute_block(executor)?;
         }
         StateDataForm::SpecCompliant => {
@@ -67,7 +68,7 @@ fn main() -> Result<()> {
 
 fn re_execute_block<T: StateForEvm>(executor: BlockExecutor<T>) -> Result<()> {
     //let post_state = executor.trace_block()?;
-    let post_state = executor.trace_transaction(2)?;
+    let post_state = executor.trace_transaction(8)?;
 
     post_state.print_storage_proof(
         "0x00000000000000adc04c56bf30ac9d3c0aaf14dc",
