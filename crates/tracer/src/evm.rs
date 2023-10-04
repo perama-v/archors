@@ -9,7 +9,7 @@ use ethers::types::{Block, Transaction};
 use revm::{
     db::{CacheDB, EmptyDB},
     inspectors::{NoOpInspector, TracerEip3155},
-    primitives::{EVMError, ResultAndState, TransactTo, U256},
+    primitives::{EVMError, ResultAndState, TransactTo, TxEnv, U256},
     EVM,
 };
 use thiserror::Error;
@@ -89,31 +89,43 @@ impl BlockEvm {
     /// Add a single transaction environment (index, sender, recipient, etc.).
     pub fn add_transaction_environment(&mut self, tx: Transaction) -> Result<&mut Self, EvmError> {
         self.tx_env_status.ready_to_set()?;
-        let env = &mut self.evm.env.tx;
 
-        env.caller = tx.from.into();
-        env.gas_limit = eu256_to_u64(tx.gas);
-        env.gas_price = match tx.gas_price {
+        let caller = tx.from.into();
+        let gas_limit = eu256_to_u64(tx.gas);
+        let gas_price = match tx.gas_price {
             Some(price) => eu256_to_ru256(price)?,
             None => todo!("handle Type II transaction gas price"),
         };
-        env.gas_priority_fee = match tx.max_priority_fee_per_gas {
+        let gas_priority_fee = match tx.max_priority_fee_per_gas {
             Some(fee) => Some(eu256_to_ru256(fee)?),
             None => None,
         };
-        env.transact_to = match tx.to {
+        let transact_to = match tx.to {
             Some(to) => TransactTo::Call(to.into()),
             None => todo!("handle tx create scheme"), // TransactTo::Create(),
         };
-        env.value = tx.value.into();
-        env.data = tx.input.0;
-        env.chain_id = Some(ru256_to_u64(self.evm.env.cfg.chain_id));
-        env.nonce = Some(eu256_to_u64(tx.nonce));
-        env.access_list = match tx.access_list {
+        let value = tx.value.into();
+        let data = tx.input.0;
+        let chain_id = Some(ru256_to_u64(self.evm.env.cfg.chain_id));
+        let nonce = Some(eu256_to_u64(tx.nonce));
+        let access_list = match tx.access_list {
             Some(list_in) => access_list_e_to_r(list_in),
             None => vec![],
         };
 
+        let new_tx_env: TxEnv = TxEnv {
+            caller,
+            gas_limit,
+            gas_price,
+            gas_priority_fee,
+            transact_to,
+            value,
+            data,
+            chain_id,
+            nonce,
+            access_list,
+        };
+        self.evm.env.tx = new_tx_env;
         self.tx_env_status.set()?;
         Ok(self)
     }
