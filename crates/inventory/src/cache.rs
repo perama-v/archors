@@ -493,7 +493,7 @@ pub fn get_block_from_cache(block: u64) -> Result<Block<Transaction>, CacheError
     })?;
     let reader = BufReader::new(file);
     let mut block: Block<Transaction> = serde_json::from_reader(reader)?;
-    block.transactions.sort_by_key(|tx| tx.nonce);
+    block.transactions.sort_by_key(|tx| tx.transaction_index);
     Ok(block)
 }
 
