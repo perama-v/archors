@@ -34,7 +34,7 @@ This will be NDJSON by default. The `eip3155` flag is required for this style.
 
 This command gets a trace then interprets it.
 ```command
-cargo run --release --example 09_use_proof | cargo run --release -p archors_interpret eip3155
+cargo run --release --example 10_use_proof_to_trace | cargo run --release -p archors_interpret eip3155
 ```
 
 ## Examples
