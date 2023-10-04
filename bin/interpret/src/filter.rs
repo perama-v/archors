@@ -100,7 +100,7 @@ pub fn process_trace(trace_style: ModeFlag) {
             get_pending_context_update(&context, &processed, &mut create_counter).unwrap();
 
         // Group processed and raw information together.
-
+        if context.is_empty() {continue}
         let juncture = Juncture::create(&processed, &unprocessed_step, &context, tx_count);
         //juncture.print_json();
         //juncture.print_pretty();
