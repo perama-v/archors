@@ -213,25 +213,19 @@ impl EIP1186MultiProof {
         let mut tasks: Vec<OracleTask> = vec![];
         for (storage_key, storage_value) in account_updates.storage {
             let key = ru256_to_eh256(storage_key);
-            if storage_value.is_changed() {
-                match self.update_storage_proof(
-                    &address_eh,
-                    key,
-                    storage_value.present_value.into(),
-                )? {
-                    ProofOutcome::Root(hash) => storage_hash = hash,
-                    ProofOutcome::IndexForOracle(traversal_index) => {
-                        debug!(
-                            "Task received for key {}",
-                            hex_encode(&storage_key.to_be_bytes_vec())
-                        );
-                        let task = OracleTask {
-                            address: address_eh,
-                            key,
-                            traversal_index,
-                        };
-                        tasks.push(task)
-                    }
+            match self.update_storage_proof(&address_eh, key, storage_value.present_value.into())? {
+                ProofOutcome::Root(hash) => storage_hash = hash,
+                ProofOutcome::IndexForOracle(traversal_index) => {
+                    debug!(
+                        "Task received for key {}",
+                        hex_encode(&storage_key.to_be_bytes_vec())
+                    );
+                    let task = OracleTask {
+                        address: address_eh,
+                        key,
+                        traversal_index,
+                    };
+                    tasks.push(task)
                 }
             }
         }
