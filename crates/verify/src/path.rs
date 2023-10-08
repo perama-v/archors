@@ -315,6 +315,7 @@ pub fn nibbles_to_prefixed_bytes(
 /// contain a nibble of data, the even variants only contain a padding.
 ///
 /// https://ethereum.org/en/developers/docs/data-structures-and-encoding/patricia-merkle-trie/#specification
+#[derive(Debug, PartialEq)]
 pub enum PrefixEncoding {
     ExtensionEven,
     ExtensionOdd(u8),
@@ -392,6 +393,8 @@ pub fn nibbles_to_bytes(nibbles: &[u8]) -> Result<Vec<u8>, PathError> {
 
 #[cfg(test)]
 mod test {
+    use crate::utils::hex_decode;
+
     use super::*;
 
     #[test]
@@ -453,6 +456,14 @@ mod test {
                 .unwrap(),
             hex::decode("3f1cb8").unwrap()
         );
+    }
+
+    #[test]
+    fn leaf_node_prefix(){
+        let node: Vec<Vec<u8>> = rlp::decode_list(&hex_decode("0xf7a02080bd76754cd8bdf6ebbcf526b1e9c300885e157b72e09c4f68214c616f7bd39594b48eee5eb17fa2821f25399a3513382863c0b3ef").unwrap());
+        let leaf_node_path: &[u8] = node.first().unwrap();
+        let encoding = PrefixEncoding::try_from(leaf_node_path).unwrap();
+        assert_eq!(encoding, PrefixEncoding::LeafEven);
     }
 
     /// Tests that adding an extension path to a partial traversal handles encoded hex prefix.
