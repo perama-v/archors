@@ -211,7 +211,11 @@ impl EIP1186MultiProof {
             .clone();
         let mut storage_hash = existing_account.storage_hash;
         let mut tasks: Vec<OracleTask> = vec![];
-        for (storage_key, storage_value) in account_updates.storage {
+        // Sort keys before applying oracle update. This is for consistency with testing and
+        // to prevent oracle misses for complex trie rearrangements. It may not be necessary.
+        let mut storage: Vec<(U256, StorageSlot)> = account_updates.storage.into_iter().collect();
+        storage.sort_by_key(|x| x.0);
+        for (storage_key, storage_value) in storage {
             let key = ru256_to_eh256(storage_key);
             match self.update_storage_proof(&address_eh, key, storage_value.present_value.into())? {
                 ProofOutcome::Root(hash) => storage_hash = hash,
