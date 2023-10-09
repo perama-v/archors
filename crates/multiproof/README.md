@@ -232,6 +232,34 @@ One can add a flag to oracle-based nodes. When encountered, the old node should 
 a temporary subtree created for the changes. When the root of the subtree matches the hash in the
 oracle-based node, the output of the EVM is confirmed to be correct.
 
+
+## Proof edits with tree depth increase
+
+If there is an exclusion proof that is converted to an inclusion proof, this
+may result in the addition of some internal nodes.
+
+For exclusion proofs that end with an extension or branch, an oracle may be required.
+
+- Terminal extension
+    - Extension has length 1: Branch added, extension can go on branch (E -> BL).
+    - Extension has length 1, and is common with new leaf: Branch added, extension can go on branch (E -> EBL).
+    - Extension length > 1: Sibling needs modification, must use oracle (E -> BL).
+- Terminal branch
+    - Branch position empty: Add on a leaf (B -> BL)
+    - Branch position occupied: Add either branch/extension, need oracle to tell.
+        - No common nibbles (B -> BBL)
+        - Common nibbles (B -> BEBL)
+- Terminal leaf (no oracle required)
+    - Leaf has one common nibble: Branch added (L -> BL).
+    - Leaf has >1 common nibble: Extension and branch added (L -> EBL).
+
+The oracle heuristic is therefore:
+- For exclusion proofs that end in branch or extension detect if oracle is required
+- Create an oracle task that replaces the terminal node (no higher-up nodes are affected)
+- The oracle task includes nodes at and below that node
+- Nodes are inserted in a similar fashion to the tree-depth-reduction oracle situations.
+
+
 ## Patterns
 
 The following section illustrates the structure of some scenarios that require oracle-based
