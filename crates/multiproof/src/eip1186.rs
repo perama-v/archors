@@ -12,14 +12,15 @@ use ethers::types::{EIP1186ProofResponse, H160, H256, U256 as eU256, U64};
 use ethers::utils::keccak256;
 use log::{debug, info};
 use revm::primitives::{
-    Account, AccountInfo, Bytecode, BytecodeState, Bytes, HashMap as rHashMap, B160, B256, U256,
+    Account, AccountInfo, Bytecode, BytecodeState, Bytes, HashMap as rHashMap, StorageSlot, B160,
+    B256, U256,
 };
 use rlp::Encodable;
 use rlp_derive::{RlpDecodable, RlpEncodable};
 use serde::Deserialize;
 use thiserror::Error;
 
-use crate::oracle::OracleTask;
+use crate::oracle::{OracleTask, TaskType};
 use crate::proof::ProofOutcome;
 use crate::utils::hex_encode;
 use crate::{
@@ -145,7 +146,7 @@ impl EIP1186MultiProof {
 
         let proof = self
             .storage_proofs
-            .get_mut(&address)
+            .get_mut(address)
             .ok_or_else(|| MultiProofError::NoAccount(hex_encode(address).to_string()))?;
 
         proof
@@ -224,10 +225,17 @@ impl EIP1186MultiProof {
                         "Task received for key {}",
                         hex_encode(&storage_key.to_be_bytes_vec())
                     );
+                    let purpose = match storage_value.present_value == U256::ZERO {
+                        true => TaskType::ForExclusion,
+                        false => TaskType::ForInclusion(
+                            rlp::encode(&storage_value.present_value).to_vec(),
+                        ),
+                    };
                     let task = OracleTask {
                         address: address_eh,
                         key,
                         traversal_index,
+                        purpose,
                     };
                     tasks.push(task)
                 }
@@ -310,7 +318,7 @@ impl StateForEvm for EIP1186MultiProof {
             nonce: acc.nonce.as_u64(),
             code_hash: acc.code_hash.into(),
             code: self.code.get(&acc.code_hash).map(|code| Bytecode {
-                bytecode: Bytes::copy_from_slice(&code),
+                bytecode: Bytes::copy_from_slice(code),
                 hash: B256::from(acc.code_hash.0),
                 state: BytecodeState::Raw,
             }),

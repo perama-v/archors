@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use archors_verify::path::{PathError, PrefixEncoding, NibblePath};
+use archors_verify::path::{NibblePath, PathError, PrefixEncoding};
 use ethers::types::H256;
 use thiserror::Error;
 
@@ -40,11 +40,10 @@ impl NodeKind {
                     PrefixEncoding::LeafEven | PrefixEncoding::LeafOdd(_) => NodeKind::Leaf,
                 })
             }
-            num @ _ => Err(NodeError::NodeHasInvalidItemCount(num)),
+            num => Err(NodeError::NodeHasInvalidItemCount(num)),
         }
     }
 }
-
 
 /// A cache of the nodes visited. If the trie is modified, then
 /// this can be used to update hashes back to the root.

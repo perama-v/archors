@@ -47,7 +47,7 @@ use crate::{proof::Node, utils::hex_encode};
 ///
 /// Tasks are completed once all other possible storage updates have been applied. Tasks are then
 /// fulfilled starting with the task with the highest traversal index.
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct OracleTask {
     /// Address involved
     pub address: H160,
@@ -55,6 +55,19 @@ pub struct OracleTask {
     pub key: H256,
     /// The index into the trie path that matches the node that needs to be looked up.
     pub traversal_index: usize,
+    /// Whether the task is for a key that is going to be included or excluded.
+    pub purpose: TaskType,
+}
+
+/// The reason an oracle is required. The key that requires an oracle: is it being added/included or
+/// removed/excluded from the trie?
+///
+/// This flag allows for testing that after the oracle data is used for a key, that the key has
+/// a valid proof.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub enum TaskType {
+    ForInclusion(Vec<u8>),
+    ForExclusion,
 }
 
 impl Display for OracleTask {
@@ -71,11 +84,12 @@ impl Display for OracleTask {
 
 impl OracleTask {
     /// Generate a new task.
-    pub fn new(address: H160, key: H256, traversal_index: usize) -> Self {
+    pub fn new(address: H160, key: H256, traversal_index: usize, purpose: TaskType) -> Self {
         OracleTask {
             address,
             key,
             traversal_index,
+            purpose,
         }
     }
     /// Gets the node from the oracle, performs checks and returns the node hash.

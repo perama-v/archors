@@ -15,7 +15,7 @@ use ethers::{
     types::{Bytes, H256, U256},
     utils::keccak256,
 };
-use log::{debug};
+use log::debug;
 use rlp::{Encodable, RlpStream};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -99,6 +99,8 @@ pub enum ModifyError {
     NoNodeForHash,
     #[error("Extension node has no final path")]
     ExtensionHasNoPath,
+    #[error("Extension node has no item (next node hash)")]
+    ExtensionHasNoItem,
     #[error("Node has no items")]
     NodeHasNoItems,
     #[error("Branch node does not have enough items")]
@@ -165,7 +167,8 @@ impl MultiProof {
     }
     /// Get the node for the given node hash.
     pub fn get_node(&self, hash: &H256) -> Result<&[u8], ProofError> {
-        Ok(self.data
+        Ok(self
+            .data
             .get(hash)
             .ok_or_else(|| ProofError::NoProofNodeForHash(hex_encode(hash)))?)
     }
@@ -350,7 +353,7 @@ impl MultiProof {
         oracle: &TrieNodeOracle,
     ) -> Result<(), ProofError> {
         // Traverse the proof. Once the oracle-requiring node is reached, replace and cascade changes.
-        let path: H256 = keccak256(&task.key).into();
+        let path: H256 = keccak256(task.key).into();
         let mut traversal = NibblePath::init(path.as_bytes());
         let mut visited_nodes: Vec<VisitedNode> = vec![];
         let mut next_node_hash = self.root;
@@ -445,7 +448,11 @@ impl MultiProof {
         }
         // Finally finish the traversal, demonstrating that the key is removed from the trie.
         // The traversal should now have enough information now that the oracle update is complete.
-        self.traverse(path, &Intent::VerifyExclusion)
+        let intent = match task.purpose {
+            crate::oracle::TaskType::ForInclusion(rlp_val) => Intent::VerifyInclusion(rlp_val),
+            crate::oracle::TaskType::ForExclusion => Intent::VerifyExclusion,
+        };
+        self.traverse(path, &intent)
             .map_err(|e| ProofError::PostOracleTraversalFailed(e.to_string()))?;
         Ok(())
     }
@@ -471,12 +478,12 @@ impl MultiProof {
             .data
             .get(&old_terminal_hash)
             .ok_or(ModifyError::NoNodeForHash)?;
-        let mut old_node: Vec<Vec<u8>> = rlp::decode_list(&old_node_rlp);
+        let mut old_node: Vec<Vec<u8>> = rlp::decode_list(old_node_rlp);
         match change {
             Change::BranchExclusionToInclusion(new_leaf_rlp_value) => {
-                // Main concept: Add leaf to the previously terminal branch.
-                // As an exclusion proof there is no other key that overlaps this path part,
-                // so no extension node is needed.
+                // Main concept: Add leaf to the previously terminal branch if item empty.
+                // If not empty, an oracle is required because the item may have some path
+                // in common (requiring an extension)
 
                 // Leaf: [remaining_path, value]
                 let traversal = &last_visited.traversal_record;
@@ -499,6 +506,9 @@ impl MultiProof {
                 let leaf_parent = old_node
                     .get_mut(branch_item_index)
                     .ok_or(ModifyError::BranchTooShort)?;
+                if !leaf_parent.is_empty() {
+                    todo!("Oracle is required (branch item occupied, an extension may be required), create oracle task")
+                }
                 *leaf_parent = leaf_node_hash.to_vec();
                 let updated_branch_node: Node = Node::try_from(old_node)?;
                 let updated_rlp_node = updated_branch_node.to_rlp_list();
@@ -516,16 +526,24 @@ impl MultiProof {
                 new_value,
                 divergent_nibble_index,
             } => {
-                // Main concept: Exclusion proof to inclusion proof by adding a leaf.
-                // An extension is required if the extension has something
-                // in common with the new leaf path.
+                // Main concept: Exclusion proof to inclusion proof by adding a branch and
+                // a leaf. If the extension path only has one nibble, no oracle is required.
 
                 // - traversal ...
-                //   - new common extension (if required)
-                //     - new branch
-                //       - new leaf
-                //       - modified extension
-                //         - original branch
+                //   - new branch
+                //     - new leaf
+                //     - hash from extension (modified if had >1 nibble)
+
+                let extension_path = old_node.first().ok_or(ModifyError::ExtensionHasNoPath)?;
+                if prefixed_bytes_to_nibbles(extension_path)?.len() != 1 {
+                    // The update requires change to the path of a different node that is not part of the proof.
+                    self.traversal_index_for_oracle_task =
+                        Some(last_visited.traversal_record.visiting_index());
+                    debug!(
+                        "Creating oracle task (extension exclusion to leaf inclusion). New node for traversal index {}",
+                        last_visited.traversal_record.visiting_index(),
+                    );
+                };
 
                 let mut updated_hash = self.add_branch_for_new_leaf(
                     old_node,
@@ -672,16 +690,15 @@ impl MultiProof {
     ///
     /// Before:
     /// - traversal ...
-    ///   - node (extension or leaf)
-    ///       - original branch (if parent is extension)
+    ///   - old node (extension or leaf)
+    ///       - original branch hash (if parent is extension)
     ///
     /// After:
     /// - traversal ...
     ///   - new common extension (if required)
     ///     - new branch
     ///       - new leaf
-    ///       - modified node (extension or leaf)
-    ///         - original branch (if parent is extension)
+    ///       - adjacent node: either modified node (leaf) or original branch hash
     ///
     /// Returns the most proximal newly created node hash.
     fn add_branch_for_new_leaf(
@@ -715,18 +732,28 @@ impl MultiProof {
             .split_first()
             .ok_or(ModifyError::NodePathTooShort)?;
 
-        // Update old node and store
-        *old_node_path = nibbles_to_prefixed_bytes(updated_node_nibbles, old_node_kind)?;
-        let updated_node_rlp = Node::try_from(old_node)?.to_rlp_list();
-        let updated_node_hash = keccak256(&updated_node_rlp);
-        self.data
-            .insert(updated_node_hash.into(), updated_node_rlp.into());
+        let adjacent_node_hash: Vec<u8> = match old_node_kind {
+            TargetNodeEncoding::Leaf => {
+                // Update old node and store
+                *old_node_path = nibbles_to_prefixed_bytes(updated_node_nibbles, old_node_kind)?;
+                let updated_node_rlp = Node::try_from(old_node)?.to_rlp_list();
+                let updated_node_hash = keccak256(&updated_node_rlp);
+                self.data
+                    .insert(updated_node_hash.into(), updated_node_rlp.into());
+                updated_node_hash.into()
+            }
+            TargetNodeEncoding::Extension => {
+                // The hash is the second item in the original extension.
+                let extension_item = old_node.last().ok_or(ModifyError::ExtensionHasNoItem)?;
+                extension_item.to_vec()
+            }
+        };
 
         // Make new branch and add children (modified node and new leaf).
         let mut node_items: Vec<Vec<u8>> = (0..17).map(|_| vec![]).collect();
         *node_items
             .get_mut(*updated_node_index_in_branch as usize)
-            .ok_or(ModifyError::BranchTooShort)? = updated_node_hash.into();
+            .ok_or(ModifyError::BranchTooShort)? = adjacent_node_hash;
         let leaf_index = traversal.nibble_at_index(divergent_nibble_index)?;
         *node_items
             .get_mut(leaf_index as usize)
@@ -736,7 +763,7 @@ impl MultiProof {
         self.data.insert(branch_hash.into(), branch_rlp.into());
 
         if common_nibbles.is_empty() {
-            // Paths have something in common
+            // Paths have nothing in common
             // - traversal ...
             //   - new branch
             //     - new leaf
@@ -838,7 +865,7 @@ impl MultiProof {
                 let unchanged_hash = visited_grandparent.node_hash;
                 // No changes to the trie can be made yet, so all nodes in the proof are said
                 // be taken care of (to be done later as an oracle task.)
-                return Ok((unchanged_hash.into(), visit_record.len()));
+                Ok((unchanged_hash.into(), visit_record.len()))
             }
             _ => {
                 // No special action as the branch does not contain an orphan.
@@ -847,7 +874,7 @@ impl MultiProof {
                 self.data.insert(updated_node_hash.into(), updated_rlp);
                 // No further deletions required.
                 // Leaf + parent = 3 nodes taken care of.
-                return Ok((updated_node_hash, 2));
+                Ok((updated_node_hash, 2))
             }
         }
     }
@@ -1084,11 +1111,13 @@ pub enum Change {
 /// The action to take when traversing a proof path.
 #[derive(Debug)]
 pub enum Intent {
-    /// Change the value at the end of the path.
+    /// Change the value at the end of the path. This is the RLP-encoded value in the
+    /// final node, not the RLP-encoded final node itself.
     Modify(Vec<u8>),
     /// Remove the key from the trie.
     Remove,
-    /// Check that the value at the end of the path is as expected.
+    /// Check that the value at the end of the path is as expected. The value is
+    /// the RLP-encoded value in the final node, not the RLP-encoded final node itself.
     VerifyInclusion(Vec<u8>),
     /// Check that key is not in the tree. The caller can check if the value
     /// represents the absent kind (null account / null storage)
@@ -1114,7 +1143,9 @@ mod test {
 
     use std::str::FromStr;
 
-    use crate::utils::hex_decode;
+    use revm::primitives::U256 as ru256;
+
+    use crate::{eip1186::slot_rlp_from_value, utils::hex_decode};
 
     use super::*;
 
