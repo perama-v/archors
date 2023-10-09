@@ -7,13 +7,16 @@ use std::{collections::HashMap, str::FromStr};
 
 use archors_multiproof::{
     eip1186::MultiProofError,
-    oracle::OracleTask,
+    oracle::{OracleTask, TaskType},
     proof::{Intent, MultiProof, ProofError, ProofOutcome},
     EIP1186MultiProof,
 };
 use archors_types::oracle::TrieNodeOracle;
 use archors_verify::path::{NibblePath, PathError};
-use ethers::{types::H160, utils::keccak256};
+use ethers::{
+    types::{H160, H256, U256},
+    utils::{keccak256, rlp},
+};
 use thiserror::Error;
 
 use crate::{
@@ -25,6 +28,8 @@ use crate::{
 pub enum OracleError {
     #[error("Unable to find address in post-state proof {0}")]
     NoPostStateAddress(String),
+    #[error("Unable to find address in pre-state proof {0}")]
+    NoPreStateAddress(String),
     #[error("Unable to find key {key} in post-state proof for address {address}")]
     NoPostStateKey { address: String, key: String },
     #[error("Multiproof Error {0}")]
@@ -120,10 +125,48 @@ pub fn demo_detect_removed_storage(_pre: BlockProofs, _post: BlockProofs) -> Tri
 
 /// Tries to apply known state transition to a multiproof. The oracle is then constructed from
 /// the known values.
-pub fn detect_removed_storage(
+///
+/// This is a "simulation" because the state is not coming from running the EVM, it is coming
+/// from pre- and post- block state proofs.
+pub fn oracle_from_simulated_state_update(
     pre: BlockProofs,
     post: BlockProofs,
 ) -> Result<TrieNodeOracle, OracleError> {
+    // Detect places where an oracle is required.
+    let mut updates: Vec<InterestingUpdate> = vec![];
+    for (address, account) in post.proofs.iter() {
+        for storage_proof_post in &account.storage_proof {
+            let key = storage_proof_post.key;
+
+            let acc_proof_pre = pre
+                .proofs
+                .get(address)
+                .ok_or_else(|| OracleError::NoPreStateAddress(hex_encode(address)))?;
+            let val_pre: U256 = acc_proof_pre
+                .storage_proof
+                .iter()
+                .find(|x| x.key == key)
+                .ok_or_else(|| OracleError::NoPostStateKey {
+                    address: hex_encode(address),
+                    key: hex_encode(key),
+                })?
+                .value;
+            let val_post = storage_proof_post.value;
+
+            if !storage_created_or_destroyed(&val_pre, &val_post) {
+                continue;
+            }
+            updates.push(InterestingUpdate {
+                address: address.to_owned(),
+                key: key.to_owned(),
+                value: storage_proof_post.value,
+            });
+        }
+    }
+    // sort updates by storage key for consistency. If keys are sorted while executing the
+    // post-execution changes, trie updates that require an oracle will be simpler.
+    updates.sort_by_key(|x| x.key);
+
     // set up multiproof for pre-block state.
     let mut multiproof_pre = EIP1186MultiProof::from_separate(
         pre.proofs.into_values().collect(),
@@ -131,26 +174,23 @@ pub fn detect_removed_storage(
         HashMap::new(),
         TrieNodeOracle::default(),
     )?;
-
-    // Detect places where an oracle is required.
     let mut tasks: Vec<OracleTask> = vec![];
-    for (address, account) in post.proofs.iter() {
-        for storage_proof_post in &account.storage_proof {
-            if !storage_proof_post.value.is_zero() {
+    for update in updates {
+        let purpose = match update.value.is_zero() {
+            true => TaskType::ForExclusion,
+            false => TaskType::ForInclusion(rlp::encode(&update.value).to_vec()),
+        };
+        match multiproof_pre.update_storage_proof(&update.address, update.key, update.value)? {
+            ProofOutcome::Root(_) => {
+                // Storage update did not require oracle - ignore.
                 continue;
             }
-            let key = storage_proof_post.key;
-            match multiproof_pre.update_storage_proof(&address, key, storage_proof_post.value)? {
-                ProofOutcome::Root(_) => {
-                    // Storage update did not require oracle - ignore.
-                    continue;
-                }
-                ProofOutcome::IndexForOracle(traversal_index) => tasks.push(OracleTask {
-                    address: address.clone(),
-                    key,
-                    traversal_index,
-                }),
-            }
+            ProofOutcome::IndexForOracle(traversal_index) => tasks.push(OracleTask {
+                address: update.address.clone(),
+                key: update.key,
+                traversal_index,
+                purpose,
+            }),
         }
     }
 
@@ -175,8 +215,13 @@ pub fn detect_removed_storage(
             .insert_proof(storage.proof.to_owned())
             .expect("Cachecd proof from RPC expected to be valid.");
         let path = keccak256(task.key);
+        // Verify that the oracle-based update resulted in a valid proof.
+        let intent = match storage.value.is_zero() {
+            true => Intent::VerifyExclusion,
+            false => Intent::VerifyInclusion(rlp::encode(&storage.value).to_vec()),
+        };
         let visited = proof
-            .traverse(path.into(), &Intent::VerifyExclusion)
+            .traverse(path.into(), &intent)
             .expect("All tasks should be for exclusion proofs (in post-block state)");
 
         // Skip the first part of the proof. Only include the required nodes.
@@ -193,4 +238,39 @@ pub fn detect_removed_storage(
         oracle.insert_nodes(task.address, nibbles_to_target.to_vec(), proof_subset)
     }
     Ok(oracle)
+}
+
+/// Detects if storage went (pre- and post- block) from absent to present, or from present to absent. That is, from exclusion proof to inclusion proof or vice versa.
+fn storage_created_or_destroyed(val_pre: &U256, val_post: &U256) -> bool {
+    let e_to_i = val_pre.is_zero() && !val_post.is_zero();
+    let i_to_e = !val_pre.is_zero() && val_post.is_zero();
+    e_to_i | i_to_e
+}
+
+/// A storage update that occurs in a block that may require an oracle.
+///
+/// Interesting == exclusion to inclusion proof or vice versa
+struct InterestingUpdate {
+    address: H160,
+    key: H256,
+    value: U256,
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_storage_created_or_destroyed() {
+        let zero = U256::from_str("0x0").unwrap();
+        let one = U256::from_str("0x1").unwrap();
+        let two = U256::from_str("0x2").unwrap();
+        // Oracle may be required.
+        assert!(storage_created_or_destroyed(&zero, &one));
+        assert!(storage_created_or_destroyed(&one, &zero));
+        // Oracle would not be required.
+        assert!(!storage_created_or_destroyed(&zero, &zero));
+        assert!(!storage_created_or_destroyed(&one, &one));
+        assert!(!storage_created_or_destroyed(&one, &two));
+    }
 }

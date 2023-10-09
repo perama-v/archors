@@ -16,13 +16,13 @@ use ethers::{
     utils::keccak256,
 };
 use futures::stream::StreamExt;
-use log::{info, debug};
+use log::{debug, info};
 use reqwest::Client;
 use thiserror::Error;
 use url::{ParseError, Url};
 
 use crate::{
-    oracle::{detect_removed_storage, OracleError},
+    oracle::{oracle_from_simulated_state_update, OracleError},
     rpc::{
         debug_trace_block_default, debug_trace_block_prestate, eth_get_proof, get_block_by_number,
         AccountProofResponse, BlockDefaultTraceResponse, BlockPrestateResponse,
@@ -442,7 +442,7 @@ pub fn get_node_oracle_from_cache(block: u64) -> Result<TrieNodeOracle, CacheErr
     let post = get_post_state_proofs_from_cache(block)?;
     let pre = get_proofs_from_cache(block)?;
     //let oracle = demo_detect_removed_storage(pre, post);
-    let oracle = detect_removed_storage(pre, post)?;
+    let oracle = oracle_from_simulated_state_update(pre, post)?;
     debug!("oracle has been constructed");
     Ok(oracle)
 }
