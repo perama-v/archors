@@ -7,7 +7,7 @@ use archors_types::{
     utils::hex_encode,
 };
 use ethers::types::{Block, Transaction, H256};
-use log::{debug, info, warn};
+use log::{info, warn};
 use revm::primitives::{Account, HashMap as rHashMap, B160, B256, U256};
 use thiserror::Error;
 

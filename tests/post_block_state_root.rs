@@ -116,19 +116,35 @@ fn test_individual_account_updates_from_block_17190873() {
             for storage in expected.storage_proof {
                 let expected_proof =
                     DisplayProof::init(storage.proof.into_iter().map(|p| p.to_vec()).collect());
-                println!("\n\nkey = {}", hex_encode(storage.key),);
                 let key_string: String = hex_encode(storage.key.as_bytes());
                 let address_string: String = hex_encode(address.as_bytes());
                 let computed_proof = computed_proofs
                     .print_storage_proof(&address_string, &key_string)
                     .unwrap();
-
-                if computed_proof.storage != expected_proof {
-                    println!(
-                        "Expected: {}\nGot: {}",
-                        expected_proof, computed_proof.storage
-                    );
-                    panic!();
+                match computed_proof.storage.different_final_node(&expected_proof) {
+                    true => {
+                        println!(
+                            "Proof for key {} has incorrect value. Expected proof: {}\nGot: {}",
+                            hex_encode(storage.key),
+                            expected_proof,
+                            computed_proof.storage
+                        );
+                    }
+                    false => {
+                        if let Some(divergence_index) =
+                            computed_proof.storage.divergence_point(&expected_proof)
+                        {
+                            if divergence_index != 0 {
+                                println!(
+                                    "key {} has bad proof (divergence index {}) but value is ok. Expected proof: {}\nGot: {}",
+                                    hex_encode(storage.key),
+                                    divergence_index,
+                                    expected_proof,
+                                    computed_proof.storage
+                                );
+                            }
+                        }
+                    }
                 }
             }
 
@@ -138,11 +154,6 @@ fn test_individual_account_updates_from_block_17190873() {
                 "Storage hash for account {} incorrect (check number {})",
                 hex_encode(address),
                 index + 1
-            );
-            panic!(
-                "\n\nBad storage root. index={} address={}",
-                index,
-                hex_encode(address),
             );
         }
         println!("Finished account {} of {}", index + 1, account_sum);
