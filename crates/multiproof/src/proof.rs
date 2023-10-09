@@ -999,7 +999,7 @@ impl MultiProof {
                             next_node_hash = H256::from_slice(item);
                             traversal.skip_extension_node_nibbles(extension)?;
                         }
-                        SubPathDiverges(_) => continue,
+                        SubPathDiverges(_) => break,
                         FullPathMatches => break,
                         FullPathDiverges(_) => break,
                     }
