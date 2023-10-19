@@ -12,7 +12,7 @@ use crate::{
     constants::{
         MAX_ACCOUNT_NODES_PER_BLOCK, MAX_ACCOUNT_PROOFS_PER_BLOCK, MAX_BYTES_PER_CONTRACT,
         MAX_BYTES_PER_NODE, MAX_CONTRACTS_PER_BLOCK, MAX_NODES_PER_PROOF,
-        MAX_STORAGE_NODES_PER_BLOCK, MAX_STORAGE_PROOFS_PER_ACCOUNT,
+        MAX_STORAGE_NODES_PER_BLOCK, MAX_STORAGE_PROOFS_PER_ACCOUNT, MAX_NODES_PER_BLOCK,
     },
     execution::{EvmStateError, StateForEvm},
     utils::{ssz_h256_to_rb256, ssz_h256_to_ru256, ssz_u256_to_ru256, ssz_u64_to_u64, UtilsError}, proof::{DisplayProof, DisplayStorageProof},
@@ -55,14 +55,21 @@ pub enum StateError {
 pub struct RequiredBlockState {
     pub compact_eip1186_proofs: CompactEip1186Proofs,
     pub contracts: Contracts,
-    pub account_nodes: AccountNodes,
-    pub storage_nodes: StorageNodes,
+    pub trie_nodes: NodeBag,
     pub blockhashes: BlockHashes,
 }
 
 pub type CompactEip1186Proofs = List<CompactEip1186Proof, MAX_ACCOUNT_PROOFS_PER_BLOCK>;
-pub type StorageNodes = List<TrieNode, MAX_STORAGE_NODES_PER_BLOCK>;
-pub type AccountNodes = List<TrieNode, MAX_ACCOUNT_NODES_PER_BLOCK>;
+/// A collection of trie nodes. Ordered lexicographically.
+///
+/// Includes nodes from different tries (account, storage).
+///
+/// The trie may be walked by:
+/// 1. Start with the state root hash or account storage hash
+/// 2. Hash all the nodes in the bag (into a dictionary) and select the one that matches (is the root node)
+/// 3. Hash the key/account to get the path
+/// 4. Follow the path, starting with the root node and decode the nodes and traverse them
+pub type NodeBag = List<TrieNode, MAX_NODES_PER_BLOCK>;
 pub type BlockHashes = List<RecentBlockHash, 256>;
 
 /// RLP-encoded Merkle PATRICIA Trie node.
@@ -89,7 +96,6 @@ pub struct CompactEip1186Proof {
     pub code_hash: SszH256,
     pub nonce: SszU64,
     pub storage_hash: SszH256,
-    pub account_proof: NodeIndices,
     pub storage_proofs: CompactStorageProofs,
 }
 
@@ -100,7 +106,6 @@ pub type CompactStorageProofs = List<CompactStorageProof, MAX_STORAGE_PROOFS_PER
 pub struct CompactStorageProof {
     pub key: SszH256,
     pub value: SszU256,
-    pub proof: NodeIndices,
 }
 
 /// An ordered list of indices that point to specific
