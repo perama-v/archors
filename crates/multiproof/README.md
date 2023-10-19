@@ -259,6 +259,15 @@ The oracle heuristic is therefore:
 - The oracle task includes nodes at and below that node
 - Nodes are inserted in a similar fashion to the tree-depth-reduction oracle situations.
 
+### Account creations
+
+When an account is created the pre-block state contains an exclusion proof, the post-block
+state contains an inclusion proof. This may result in an increase in the trie depth (see above).
+
+Note: In this regard, accounts are similar to storage. However, for account destruction once the account
+is created in the trie, it is never removed even after SELFDESTRUCT.
+
+
 
 ## Patterns
 
