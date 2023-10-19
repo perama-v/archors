@@ -31,7 +31,7 @@ fn main() -> Result<()> {
     let block_number = 17190873;
     // Get block to execute (eth_getBlockByNumber).
     let block = get_block_from_cache(block_number)?;
-    let form = StateDataForm::MultiProof;
+    let form = StateDataForm::Basic;
 
     match form {
         StateDataForm::Basic => {
@@ -69,12 +69,6 @@ fn main() -> Result<()> {
 fn re_execute_block<T: StateForEvm>(executor: BlockExecutor<T>) -> Result<()> {
     //let post_state = executor.trace_block()?;
     let post_state = executor.trace_transaction(8)?;
-
-    post_state.print_storage_proof(
-        "0x00000000000000adc04c56bf30ac9d3c0aaf14dc",
-        "0xfe073a4a8a654ccc9ca8e39369abc3b9919fde0aa58577acb685c63e0603a5a1",
-    )?;
-
     Ok(())
 }
 
