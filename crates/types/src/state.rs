@@ -10,12 +10,13 @@ use thiserror::Error;
 use crate::{
     alias::{SszH160, SszH256, SszU256, SszU64},
     constants::{
-        MAX_ACCOUNT_NODES_PER_BLOCK, MAX_ACCOUNT_PROOFS_PER_BLOCK, MAX_BYTES_PER_CONTRACT,
-        MAX_BYTES_PER_NODE, MAX_CONTRACTS_PER_BLOCK, MAX_NODES_PER_PROOF,
-        MAX_STORAGE_NODES_PER_BLOCK, MAX_STORAGE_PROOFS_PER_ACCOUNT, MAX_NODES_PER_BLOCK,
+        MAX_ACCOUNT_PROOFS_PER_BLOCK, MAX_BYTES_PER_CONTRACT, MAX_BYTES_PER_NODE,
+        MAX_CONTRACTS_PER_BLOCK, MAX_NODES_PER_BLOCK, MAX_NODES_PER_PROOF,
+        MAX_STORAGE_PROOFS_PER_ACCOUNT,
     },
     execution::{EvmStateError, StateForEvm},
-    utils::{ssz_h256_to_rb256, ssz_h256_to_ru256, ssz_u256_to_ru256, ssz_u64_to_u64, UtilsError}, proof::{DisplayProof, DisplayStorageProof},
+    proof::{DisplayProof, DisplayStorageProof},
+    utils::{ssz_h256_to_rb256, ssz_h256_to_ru256, ssz_u256_to_ru256, ssz_u64_to_u64, UtilsError},
 };
 
 use revm::primitives::{
@@ -201,7 +202,10 @@ impl StateForEvm for RequiredBlockState {
         )
     }
 
-    fn print_account_proof<T: AsRef<str>>(&self, _account_address: T) -> Result<DisplayProof, EvmStateError> {
+    fn print_account_proof<T: AsRef<str>>(
+        &self,
+        _account_address: T,
+    ) -> Result<DisplayProof, EvmStateError> {
         todo!()
     }
 

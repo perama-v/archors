@@ -1,8 +1,5 @@
 //! Useful Simple Serialize (SSZ) constants
 
-/// Maximum number of intermediate nodes permitted for all account proofs.
-/// Proofs are for the execution of a single block. Set to 2**15.
-pub const MAX_ACCOUNT_NODES_PER_BLOCK: usize = 32768;
 
 /// Number of prior blockhashes a block could access via the BLOCKHASH opcode.
 pub const MAX_BLOCKHASH_READS_PER_BLOCK: usize = 256;
@@ -19,9 +16,9 @@ pub const MAX_CONTRACTS_PER_BLOCK: usize = 2048;
 /// Maximum number of nodes permitted in a merkle patricia proof. Set to 2**6.
 pub const MAX_NODES_PER_PROOF: usize = 64;
 
-/// Maximum number of intermediate nodes permitted for all storage proofs.
+/// Maximum number of intermediate nodes permitted for all proofs.
 /// Proofs are for the execution of a single block. Set to 2**15.
-pub const MAX_STORAGE_NODES_PER_BLOCK: usize = 32768;
+pub const MAX_NODES_PER_BLOCK: usize = 32768;
 
 /// Maximum number of account proofs permitted. Proofs are for the execution
 /// of a single block. Set to 2**13.
