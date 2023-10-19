@@ -10,7 +10,10 @@ use archors_inventory::{
 use archors_multiproof::{EIP1186MultiProof, StateForEvm};
 use archors_tracer::trace::{BlockExecutor, PostExecutionProof};
 use archors_types::proof::DisplayProof;
-use ethers::types::{EIP1186ProofResponse, H160, H256};
+use ethers::{
+    types::{EIP1186ProofResponse, H160, H256},
+    utils::keccak256,
+};
 use log::info;
 
 /**
@@ -156,7 +159,34 @@ fn test_individual_account_updates_from_block_17190873() {
                 index + 1
             );
         }
-        println!("Finished account {} of {}", index + 1, account_sum);
+
+        let expected_account_proof_post = DisplayProof::init(
+            expected
+                .account_proof
+                .into_iter()
+                .map(|node| node.to_vec())
+                .collect(),
+        );
+        let computed_account_proof_post = computed_proofs
+            .print_account_proof(&hex_encode(address))
+            .unwrap();
+        match expected_account_proof_post.different_final_node(&computed_account_proof_post) {
+            true => todo!("Account {} final node different.", hex_encode(address)),
+            false => {
+                match computed_account_proof_post.divergence_point(&expected_account_proof_post) {
+                    None => {}
+                    Some(index) => println!(
+                        "Account {} differs at account proof index {}. ",//Expected {}\n Got {}",
+                        hex_encode(address),
+                        index,
+                        //expected_account_proof_post,
+                        //computed_account_proof_post
+                    ),
+                }
+            }
+        }
+
+        // println!("Finished account {} of {}", index + 1, account_sum);
     }
 }
 
