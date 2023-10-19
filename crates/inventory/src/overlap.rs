@@ -71,6 +71,9 @@ pub fn measure_proof_overlap(blocks: Vec<u64>) -> Result<DataSaved, OverlapError
                 &mut to_store,
             );
         }
+        todo!("Overlap stats not updated after implementing node bag")
+        /*
+        // TODO Note: The node bag contains account and storage nodes all together.
         for node in proof.account_nodes.iter() {
             check_bytes(
                 &mut accounts_saved_bytes,
@@ -87,6 +90,7 @@ pub fn measure_proof_overlap(blocks: Vec<u64>) -> Result<DataSaved, OverlapError
                 &mut to_store,
             )
         }
+         */
     }
 
     Ok(DataSaved {
